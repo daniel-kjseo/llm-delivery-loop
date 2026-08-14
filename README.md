@@ -1,8 +1,15 @@
-# llm-delivery-loop
+# LDL — LLM Delivery Loop
 
-A pattern for delivering results with AI agents. In one sentence — **humans govern through contracts and gates, agents execute through loops, and every project compounds into a second brain.** Three elements: ① contract & gates (governance) ② loop execution (delivery) ③ compounding assets. If the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) compounds knowledge, this compounds delivery.
+**A delivery methodology for AI agents: contract first, gated delivery loop, compounding second brain.**
 
-Paste this document into your agent and ask: "Install this into my workspace."
+**LDL** (LLM Delivery Loop) is a pattern for delivering real results with AI agents. In one sentence — **humans govern through contracts and gates, agents execute through loops, and every project compounds into a second brain.** Three elements: (1) contract & gates (governance) (2) loop execution (delivery) (3) compounding assets. If the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) compounds knowledge, LDL compounds delivery.
+
+> **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
+> Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
+
+**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four human approval gates · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
+
+**If you are looking for** an AI agent workflow that survives real projects, a way to stop re-explaining context to your agent every session, contract-first prompting, human-in-the-loop quality gates, or a second brain that agents actually maintain — that is what LDL is for.
 
 ## Core
 
@@ -204,3 +211,15 @@ The operation of the workspace root (`raw/` · `wiki/` · `index.md` · `RULES.m
 
 - The human's job: set the criteria, judge at the gates. The agent's job: everything else.
 - This document is a pattern. Instantiate folder names, formats, and concrete gate shapes with your agent to fit the project.
+
+---
+
+## About LDL
+
+**LDL — LLM Delivery Loop.** Maintained by [@daniel-kjseo](https://github.com/daniel-kjseo). MIT licensed — use it, fork it, rename it to fit your team.
+
+- Site: <https://daniel-kjseo.github.io/llm-delivery-loop/>
+- Source: <https://github.com/daniel-kjseo/llm-delivery-loop>
+- Related reading: [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) by Andrej Karpathy — LDL is the delivery-side counterpart.
+
+Found this useful, or ran it on a real project? Open an issue with what broke — every failure becomes a rule in `RULES.md`, which is the whole point.

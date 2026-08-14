@@ -1,0 +1,34 @@
+# GitHub Pages / Jekyll configuration — LDL (LLM Delivery Loop)
+# Pages source: main branch, root folder.
+# README.md becomes the site index automatically (jekyll-readme-index is on by default).
+
+title: "LDL — LLM Delivery Loop"
+description: "A delivery methodology for AI agents: contract first, gated delivery loop, compounding second brain."
+url: "https://daniel-kjseo.github.io"
+baseurl: "/llm-delivery-loop"
+lang: en
+
+theme: jekyll-theme-cayman
+
+plugins:
+  - jekyll-seo-tag    # <title>, meta description, canonical, Open Graph, JSON-LD
+  - jekyll-sitemap    # generates /sitemap.xml
+
+author:
+  name: daniel-kjseo
+
+twitter:
+  card: summary_large_image
+
+social:
+  name: "LDL — LLM Delivery Loop"
+  links:
+    - https://github.com/daniel-kjseo/llm-delivery-loop
+
+# STEP: paste the content value from Google Search Console's
+# "HTML tag" verification method here, then uncomment. jekyll-seo-tag emits it.
+# google_site_verification: "PASTE_THE_CONTENT_VALUE_HERE"
+
+exclude:
+  - LICENSE
+  - .gitignore
