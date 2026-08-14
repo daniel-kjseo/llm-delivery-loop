@@ -7,6 +7,7 @@ description: "A delivery methodology for AI agents: contract first, gated delive
 url: "https://daniel-kjseo.github.io"
 baseurl: "/llm-delivery-loop"
 lang: en
+google_site_verification: TfNkCBYQZmojzz5yh1hRWjfG378Cu8FeEKAqFz-_8yk
 
 theme: jekyll-theme-cayman
 
