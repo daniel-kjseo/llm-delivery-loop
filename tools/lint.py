@@ -3,11 +3,14 @@
 
   lint.py [workspace_root]     lint a workspace (default: current directory)
   lint.py --selftest           conformance check: plants the step-4 negative
-                               fixtures plus empty-criteria, empty-section,
-                               bare-judge, raw-deletion, malformed-state and
-                               name-traversal fixtures in a temp workspace,
-                               one at a time, and fails unless each is caught
-                               by its exact error at its exact path
+                               fixtures plus hostile ones (empty criteria and
+                               sections, bare judges, non-UTF8 and unreadable
+                               files, raw deletion, malformed state, name
+                               traversal) and legit-input probes (titled
+                               links, section names inside body text) in a
+                               temp workspace, one at a time, and fails unless
+                               each verdict is exact - the failing check names
+                               print on failure
 
 Checks
   L1 broken links      every relative link reachable from index.md resolves
@@ -42,14 +45,25 @@ class Lint:
         return os.path.relpath(p, self.root)
 
     # -- helpers ----------------------------------------------------------
-    def links_of(self, path):
+    def read_text(self, path, code):
+        """Read a managed text file; an unreadable file is a verdict, not a traceback."""
         try:
-            text = open(path, encoding="utf-8").read()
+            return open(path, encoding="utf-8").read()
+        except UnicodeDecodeError:
+            self.err(code, f"not valid UTF-8: {self.rel(path)}")
         except OSError:
+            self.err(code, f"unreadable file: {self.rel(path)}")
+        return None
+
+    def links_of(self, path):
+        text = self.read_text(path, "L1")
+        if text is None:
             return []
         out = []
         for m in LINK.finditer(text):
-            t = m.group(1).strip().split("#")[0]
+            t = m.group(1).strip()
+            t = re.sub(r"""\s+("[^"]*"|'[^']*')$""", "", t)  # optional markdown title
+            t = t.split("#")[0].strip()
             if not t or t.startswith(("http://", "https://", "mailto:")):
                 continue  # external URLs: outside lint scope - never fetched, never a verdict
             out.append(os.path.normpath(os.path.join(os.path.dirname(path), t)))
@@ -107,14 +121,25 @@ class Lint:
         if not os.path.exists(c):
             self.err("L4", f"contract missing: {rel}")
             return
-        text = open(c, encoding="utf-8").read()
+        text = self.read_text(c, "L4")
+        if text is None:
+            return
 
         def section(title):
-            m = re.search(rf"^#+ .*{title}.*?$(.*?)(?=^#+ |\Z)", text, re.M | re.S | re.I)
-            if not m:
-                return ""
-            # annotation blockquotes are guidance, not contract content
-            return "\n".join(l for l in m.group(1).splitlines() if not l.lstrip().startswith(">"))
+            # line-anchored: only a real heading line opens a section — the same
+            # words inside body text must never move the anchor
+            lines = text.splitlines()
+            for i, ln in enumerate(lines):
+                if re.match(rf"#+ .*{re.escape(title)}", ln, re.I):
+                    body = []
+                    for nxt in lines[i + 1:]:
+                        if re.match(r"#+ ", nxt):
+                            break
+                        # annotation blockquotes are guidance, not contract content
+                        if not nxt.lstrip().startswith(">"):
+                            body.append(nxt)
+                    return "\n".join(body)
+            return ""
 
         for sec in ["2W1H", "Constraints", "Evaluation criteria", "Failure conditions", "Execution plan"]:
             if not re.search(rf"^#+ .*{re.escape(sec)}", text, re.M | re.I):
@@ -173,7 +198,11 @@ class Lint:
                 p = os.path.join(r, f)
                 key = self.rel(p)
                 seen_raw.add(key)
-                h = hashlib.sha256(open(p, "rb").read()).hexdigest()
+                try:
+                    h = hashlib.sha256(open(p, "rb").read()).hexdigest()
+                except OSError:
+                    self.err("L5", f"raw file unreadable: {key}")
+                    continue
                 if key in state["raw"] and state["raw"][key] != h:
                     self.err("L5", f"raw file changed (immutable): {key}")
                 state["raw"][key] = state["raw"].get(key, h)
@@ -187,7 +216,11 @@ class Lint:
                     continue
                 p = os.path.join(r, f)
                 key = self.rel(p)
-                data = open(p, "rb").read()
+                try:
+                    data = open(p, "rb").read()
+                except OSError:
+                    self.err("L6", f"log unreadable: {key}")
+                    continue
                 prev = state["logs"].get(key)
                 if prev:
                     if len(data) < prev["len"] or hashlib.sha256(data[: prev["len"]]).hexdigest() != prev["sha"]:
@@ -334,11 +367,50 @@ def selftest():
             "2. tone approved — judge: human [IV-05]" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
+        # fixture 10: section names mentioned in body text are not headings —
+        # a good contract whose execution plan says "evaluation criteria" must pass
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text + "| P6 | 06_VERIFICATION.md | evaluation criteria and failure conditions check | gate | 1d |\n")
+        results["decoy phrase in body passes"] = Lint(ws).run() == 0
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 11: a markdown link with a title is still a link, not a broken path
+        open(idx, "w", encoding="utf-8").write(idx_text + '- [c](CLAUDE.md "the constitution")\n')
+        results["titled link passes"] = Lint(ws).run() == 0
+        open(idx, "w", encoding="utf-8").write(idx_text)
+
+        # fixture 12: a crawled file that is not UTF-8 must be a verdict, not a traceback
+        open(os.path.join(ws, "wiki", "binary.md"), "wb").write(b"# ok\n\xff\xfe garbage\n")
+        open(idx, "w", encoding="utf-8").write(idx_text + "- [b](wiki/binary.md)\n")
+        try:
+            l = Lint(ws); l.run()
+            results["non-UTF8 file (L1, exact)"] = (
+                f"[L1] not valid UTF-8: {os.path.join('wiki', 'binary.md')}" in l.errors)
+        except Exception:  # noqa: BLE001
+            results["non-UTF8 file (L1, exact)"] = False
+        os.remove(os.path.join(ws, "wiki", "binary.md"))
+        open(idx, "w", encoding="utf-8").write(idx_text)
+
+        # fixture 13: a raw file the lint cannot hash must be a verdict, not a
+        # traceback (skipped where the host forbids creating symlinks)
+        try:
+            os.symlink("nonexistent-target", os.path.join(proj, "raw", "dangling"))
+        except OSError:
+            pass
+        else:
+            try:
+                l = Lint(ws); l.run()
+                results["unreadable raw (L5, exact)"] = (
+                    f"[L5] raw file unreadable: {os.path.join('projects', '2026-01-01_good', 'raw', 'dangling')}" in l.errors)
+            except Exception:  # noqa: BLE001
+                results["unreadable raw (L5, exact)"] = False
+            os.remove(os.path.join(proj, "raw", "dangling"))
+
         failed = [k for k, v in results.items() if not v]
         if failed:
             print("SELFTEST FAIL -> " + ", ".join(failed))
             return 1
-        print(f"SELFTEST PASS - {len(results)} checks: clean pass + structural, empty-criteria, empty-section, bare-judge, raw-deletion, malformed-state, traversal fixtures all caught, each by its exact error")
+        print(f"SELFTEST PASS - {len(results)} checks: hostile fixtures all caught by their exact errors, legit-input probes all pass clean")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
