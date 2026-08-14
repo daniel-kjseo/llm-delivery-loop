@@ -18,12 +18,13 @@ Checks
                        (raw/ is tracked by the manifest, not link-crawled)
   L3 naming            projects/ folders are YYYY-MM-DD_<name>
   L4 contract gate     required sections present, with real content - bare
-                       dashes, HTML comments and a lone table header do not
-                       count; >=3 failure conditions; every criterion names
-                       its judge with a non-blank parenthesized method -
-                       judge: <type> (<method/who>); criteria and failure
-                       conditions carry no [hypothesis]; the contract cites
-                       at least one interview ID (IV-nn)
+                       dashes or underscores, HTML comments/tags/entities
+                       and a lone table header do not count; >=3 failure
+                       conditions; every criterion names its judge with an
+                       alphanumeric parenthesized method - judge: <type>
+                       (<method/who>); criteria and failure conditions carry
+                       no [hypothesis]; the contract cites at least one
+                       interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
   L6 log append-only   logs/**/log.md may only grow; rewritten history fails
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
@@ -129,9 +130,12 @@ class Lint:
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
         def substantive(body):
-            # content = at least one line carrying a word character; a lone
-            # table header is scaffolding, not a plan
-            lines = [ln for ln in body.splitlines() if re.search(r"\w", ln)]
+            # content = at least one line carrying an alphanumeric character
+            # after markup is discounted; underscores render as nothing readable
+            # (___ is a horizontal rule) and a lone table header is scaffolding
+            body = re.sub(r"<[^>]+>", " ", body)             # HTML tags
+            body = re.sub(r"&#?[A-Za-z0-9]+;", " ", body)    # HTML entities
+            lines = [ln for ln in body.splitlines() if re.search(r"[^\W_]", ln)]
             table = [ln for ln in lines if ln.lstrip().startswith("|")]
             return len(lines) - (1 if table else 0) >= 1
 
@@ -169,7 +173,7 @@ class Lint:
         if not items:
             self.err("L4", f"{rel}: no evaluation criteria - an empty pass line cannot gate anything")
         for l in items:
-            if not re.search(r"judge:\s*(code|human|model|fresh-context)\s*\([^)]*\w[^)]*\)", l, re.I):
+            if not re.search(r"judge:\s*(code|human|model|fresh-context)\s*\([^)]*[^\W_)][^)]*\)", l, re.I):
                 self.err("L4", f"{rel}: criterion without judge: <type> (<method/who>) - {l.strip()[:50]}")
         fail = section("Failure conditions")
         fails = [l for l in fail.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
@@ -447,6 +451,32 @@ def selftest():
             contract_text.replace("- one week [IV-04]\n", "<!-- TODO fill in -->\n"))
         l = Lint(ws); l.run()
         results["comment-only section (L4, exact)"] = (
+            f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixtures 18-19: markup that renders as nothing is not content either
+        for markup, tag in (("<br>", "br-only"), ("&nbsp;", "nbsp-only")):
+            open(good_contract, "w", encoding="utf-8").write(
+                contract_text.replace("- one week [IV-04]\n", markup + "\n"))
+            l = Lint(ws); l.run()
+            results[f"{tag} section (L4, exact)"] = (
+                f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 20: underscores are not a judge identity
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("judge: human (owner)", "judge: human (___)"))
+        l = Lint(ws); l.run()
+        results["underscore judge (L4, exact)"] = (
+            f"[L4] {goodrel}: criterion without judge: <type> (<method/who>) - "
+            "2. tone approved — judge: human (___) [IV-05]" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 21: an underscore horizontal rule is as empty as a dashed one
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("- one week [IV-04]\n", "___\n"))
+        l = Lint(ws); l.run()
+        results["underscore-rule section (L4, exact)"] = (
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
