@@ -37,33 +37,73 @@ Contract = Phase 0–1 (goal, requirements) / structure = Phase 2 / delegation =
 
 - The inner loop completes one project.
 - The outer loop promotes lessons into assets. **Project complete = deliverable shipped + at least one lesson promoted.**
-- **The double loop is physical — it is the folder structure.** The workspace root (constitution · `RULES.md` · `index.md` · `raw/` · `wiki/` · `templates/` · `logs/` — persistent, cross-project) is the outer loop; each project folder under `projects/` (contract · phase documents · `raw/` · `engineering/` · `logs/` · `PROGRESS.md`) is the inner loop. Promotion = copying from a project folder up to the root. The default tree is in installation step 2.
+- **The double loop is physical — it is the folder structure.** The workspace root (constitution · `RULES.md` · `index.md` · `raw/` · `wiki/` · `templates/` · `logs/` — persistent, cross-project) is the outer loop; each project folder under `projects/` (contract · phase documents · `raw/` · `05_engineering/` · `logs/` · `PROGRESS.md`) is the inner loop. Promotion = copying from a project folder up to the root. The default tree is in installation step 2.
 - There are two source layers: **root `raw/`** = second-brain collections (project-independent — articles, papers, clippings), **project `raw/`** = that project's sources (RFP, meeting notes, survey materials). Both immutable — the agent only reads.
-- Per-layer permissions: `raw/` (immutable sources) / `wiki/` (created/updated with approval) / `engineering/` (working results — delivered versions point-in-time frozen) / constitution · `RULES.md` (changed only with human approval) / `logs/` (append-only).
-- **Apply all of Phase 0–6 to every piece of work, leaving one document per phase.** One page max per phase document; the contract (`CONTRACT.md`) sits at the project folder root, phase documents in the project's `phase-docs/`.
+- Per-layer permissions: `raw/` (immutable sources) / `wiki/` (created/updated with approval) / `05_engineering/` (working results — delivered versions point-in-time frozen) / constitution · `RULES.md` (changed only with human approval) / `logs/` (append-only).
+- **Apply all of Phase 0–6 to every piece of work, leaving one document per phase.** One page max per phase document. The phase documents sit flat at the project folder root — five one-page documents do not need a folder, they need an order.
+- **Number the phase documents by phase, not by sequence**: `00_CONTRACT.md` · `01_REQUIREMENTS.md` · `03_EVIDENCE.md` · `04_SCOPE.md` · `06_VERIFICATION.md`. `02` and `05` are missing on purpose — Phase 2's deliverable is the project constitution and Phase 5's is the `05_engineering/` folder. **The gaps are information.** Phase numbers never change, so a document added later never forces a renumber, and the filename alone tells you which gate you are standing at. **Numbered = a phase document: it belongs to one phase, and its number *is* that phase. Unnumbered (`PROGRESS.md`, `CLAUDE.md`) = a standing document that spans every phase.** (Numbering says which phase owns a file, not how often it changes — `06_VERIFICATION.md` is numbered and still grows with every increment.) Project folders are `YYYY-MM-DD_<name>` — the start date, never renamed, because renaming breaks every link into it.
 
 ## Phase 0 — Goal setting (the contract)
 
-**This phase's deliverable is a contract between the user and the AI.** Agree on what problem to solve, why, how, and how the whole flow will run; every later phase is execution of the contract. Scope changes are handled as contract changes. Keep the contract as a separate file from the constitution (`CONTRACT.md` or similar) — the constitution holds immutable principles; the contract is a project document updated through contract changes.
+**This phase's deliverable is a contract between the user and the AI.** Agree on what problem to solve, why, how, and how the whole flow will run; every later phase is execution of the contract. Scope changes are handled as contract changes. Keep the contract as a separate file from the constitution (`00_CONTRACT.md`) — the constitution holds immutable principles; the contract is a project document updated through contract changes.
 
-Deliverable: `CONTRACT.md`
+Deliverable: `00_CONTRACT.md` — preceded by the interview record in `raw/`.
+
+### The interview comes first
+
+**The contract is not what the agent inferred — it is what the human said.** Before writing the contract, interview the user and preserve the answers verbatim in the project's `raw/` (one file, IDs `IV-01`, `IV-02`, …). The contract then **cites those IDs**, and any field with no citation is agent inference and carries a `[hypothesis]` label. This applies Phase 1's primary-utterance rule at Phase 0, where it decides everything downstream.
+
+Ask three or four at a time. Offer choices — including your own guess — and allow free text; a wrong guess is itself information.
+
+| Question | The contract field it fills |
+|---|---|
+| What is the real problem behind this request? | Why |
+| What exactly is in your hands when this is done? | What |
+| How will you check that it was done? | How · evaluation criteria |
+| By when, at what cost, with how many people? | Constraints |
+| Who decides pass or fail — a person, or code? | Criteria judge |
+| Is there work here that cannot be undone? | Permission tiers |
+| Do you know this domain? Where are the primary sources? | Phase 3 depth · `raw/` |
+| Verified once at a deadline, or continuously? | Scope mode |
+| What would you look at and call this a failure? | Failure conditions |
+
+**A question that fills no field is not asked** — it only spends the user's attention.
+
+Go deeper only on a trigger: a vague word ("fast", "properly") → ask for the number and the instrument; Why and What don't connect → "how does that deliverable remove that problem?"; a criterion can't decide pass or fail → "what would you look at and call it failure?"; irreversible work exists → approval path and rollback; no domain expertise → who to ask, which document is primary; the constraints make the What impossible → "what do you drop first?"; `raw/` is empty → **ask for the material before asking more questions** — one document can remove five of them.
+
+**"I don't know" is a valid answer.** It enters the contract as `[hypothesis]` and becomes a Phase 3 research item. An interview that stalls on unknowns is a bad interview.
+
+**Cost ceiling: three rounds.** If the exit tests still fail after three, this is not a problem an interview can solve — hold it, or hand it to Phase 3.
+
+### The five exit tests — the interview ends when all five pass
+
+- **T1 Can it fail** — three concrete failure situations are written down.
+- **T2 The stranger** — a **fresh context** reads only the contract and answers *what is this work · what is the pass line · what stops you from starting*. Wherever it misreads, that is your next question. **This is the Phase 6 verifier-separation ladder pulled back to Phase 0: the author of a contract cannot see its own contradictions.** Run it every time, not only on large projects.
+- **T3 The judge** — every criterion names who decides, and at least half are decided by code.
+- **T4 Constraint collision** — the What is actually reachable within the schedule, cost and staffing. If not, cut the scope now; discovering it in Phase 4 is late.
+- **T5 Primary source** — Why and What come from the user's words, not the agent's. Whatever is inference is labelled as inference.
+
+Each failed test is the next question. The interview is a loop, not a form — so give it what every loop needs: a verifier (the tests), a cost ceiling (three rounds), and a termination condition (all five pass).
+
 
 - Define the goal in **2W1H**:
   - **Why**: the fundamental problem being solved, in one sentence. Write the problem behind the request, not the surface request.
   - **What**: the final deliverable, in one sentence.
   - **How**: the approach and the verification method.
 - **State the constraints**: cost, schedule, staffing, technology, policy. Constraints are first-class variables in every later judgment.
-- **Write the evaluation criteria**: define what verifies goal achievement, and how. Write them concretely enough to decide pass or fail.
+- **Write the evaluation criteria**: define what verifies goal achievement, and how. Write them concretely enough to decide pass or fail — name the instrument, not just the target ("first page of Google" is not a criterion; "inside the top ten results in an incognito window" is).
+- **Write three failure conditions**: concrete situations in which you would call this project a failure. **A contract that cannot fail cannot succeed either** — if nothing counts as failure, the evaluation criteria are empty.
 - **Write the execution plan together with the AI**: how Phase 1–6 will run — for each phase, state the **deliverable path / verification method (which file the human opens, judged against what criteria) / whether it ends in a gate**, plus milestones and a time budget per phase. A plan without a time budget is not a plan. The contract governs the folder structure and the verification method.
-- **Gate ① contract approval: no contract (2W1H + constraints + evaluation criteria + execution plan), no Phase 1.**
+- **Gate ① contract approval: no contract (2W1H + constraints + evaluation criteria + failure conditions + execution plan, every field traceable to an interview ID), no Phase 1.**
 
 ## Phase 1 — Requirements definition
 
-Deliverable: `REQUIREMENTS.md`
+Deliverable: `01_REQUIREMENTS.md`
 
 - **Requirements definition = problem definition.** Clients cannot define requirements well. Listen and define them on their behalf.
 - Elicitation: primary utterances (interviews, meeting notes, the original request) get the highest weight. Preserve verbatim; separate source from interpretation.
 - Specification: record each requirement with a **unique ID + type (functional/non-functional) + priority + verification method + source (link to the primary utterance)**. One requirement, one sentence. No ambiguous words ("fast", "appropriately"). Write it so pass or fail can be decided.
+- **Source coverage**: label every requirement's source as `(a)` a primary file, `(b)` an interview ID, or `(c)` agent inference. **If `(c)` exceeds 30%, stop Phase 1 and open a second interview.** Asking only "is `raw/` empty?" misses the case where material exists but is not the right material. And in that second interview, **ask for documents before asking questions.**
 - Management: **the requirement ID is the axis of traceability** — the solution (Phase 4), the deliverables (Phase 5), and the verification (Phase 6) all link back by ID. Requirement changes go through contract change.
 
 ## Phase 2 — Scaffolding structure design
@@ -79,10 +119,10 @@ Deliverable: the project constitution + the delegation and permission structure
 
 ## Phase 3 — Problem research
 
-Deliverable: `EVIDENCE.md` (the evidence ledger)
+Deliverable: `03_EVIDENCE.md` (the evidence ledger)
 
 - Research starts by consulting the workspace index (root `index.md`) — check what is already known (wiki, past projects, held problems) before going external.
-- Research the background of the requirements and finalize the problem. Force an evidence label on every claim: `[hypothesis]` / `[measured]` (date required) / `[proven]`. No unlabeled assertions.
+- Research the background of the requirements and finalize the problem. Force an evidence label on every claim: `[hypothesis]` / `[measured · 2026-08-14]` (date required, **inside** the brackets) / `[proven]`. No unlabeled assertions. Write the date inside the brackets — `[measured](2026-08-14)` is markdown link syntax and renders as a broken link everywhere.
 - Research is fact-based, along two axes: **official documents and primary sources** (the axis of fact) and **real user feedback and VOC** (the axis of reality). The two axes cross-verify each other — what the docs promise but users complain about, and what users want but is officially impossible, is often the heart of the problem. Speculative sources enter only as `[hypothesis]`.
 - For site visits and interviews: write the checklist first, then fill each item with evidence (photos, documents, records).
 - A solution may not emerge. **"No solution found" is also a result** — record it with what was searched and how far (the coverage). Without that record, the next attempt starts from zero.
@@ -94,7 +134,7 @@ Deliverable: `EVIDENCE.md` (the evidence ledger)
 
 ## Phase 4 — Solution scoping & priorities
 
-Deliverable: `SCOPE.md`
+Deliverable: `04_SCOPE.md`
 
 - Build 2–3 solution candidates and compare them: requirement coverage (by ID) / cost and schedule (against the contract's constraints) / risk. Never go straight to a single candidate.
 - Define the output first, in one sentence. If the name alone doesn't paint the picture, the scope is wrong.
@@ -112,7 +152,7 @@ Deliverable: `SCOPE.md`
 
 ## Phase 5 — Engineering execution
 
-Deliverable: the results accumulating in `engineering/` (delivered versions point-in-time frozen)
+Deliverable: the results accumulating in `05_engineering/` (delivered versions point-in-time frozen)
 
 - Build the deliverables according to the execution plan. Scope changes discovered during execution are not applied unilaterally — they go through contract-change approval.
 - **Never build everything and then verify.** Complete the top one or two priority items first, pass them through Phase 6 verification, then move to the next increment — Phase 5↔6 alternate per increment. Fast verification beats late completion, and the first increment is the shakedown run of the verification system itself.
@@ -122,7 +162,7 @@ Deliverable: the results accumulating in `engineering/` (delivered versions poin
 
 ## Phase 6 — The loop (verify · iterate · feed back)
 
-Deliverable: `VERIFICATION.md` (the verification report — updated cumulatively per increment)
+Deliverable: `06_VERIFICATION.md` (the verification report — updated cumulatively per increment)
 
 - **Phase 6 runs per increment** (alternating with Phase 5). The verification loop runs every increment; feedback and lint run once, at project completion.
 - Loop preconditions: a verifiable goal + a verifier. Missing either, no loop. Three loop requirements: verifier / cost ceiling / termination condition.
@@ -133,7 +173,7 @@ Deliverable: `VERIFICATION.md` (the verification report — updated cumulatively
   - ③ **At minimum**: a fresh context of the same model, instructed to "find the flaws."
 - Feedback fixes the criteria, not the deliverable: instead of "do it again," say **"from now on, judge by this criterion and do it again."** Iterate until the contract's evaluation criteria are met.
 - **If the loop hits its cost ceiling or termination condition while still short of the criteria**, stop and escalate to the human — the verdict is one of three: add budget / contract change (adjust criteria or scope) / hold that ID.
-- Write the verification report (`VERIFICATION.md`) as **pass/fail per requirement ID**. Do not open the delivery gate until every ID has a verdict.
+- Write the verification report (`06_VERIFICATION.md`) as **pass/fail per requirement ID**. Do not open the delivery gate until every ID has a verdict.
 - On completion, feed back: promote units of meaning (decisions, lessons, improved templates) to the workspace root, curated through the five verdicts, and run one lint pass — see the outer loop.
 - **Gate ④ final delivery: the human gives final confirmation against the contract's evaluation criteria. Rejection is voiced in the language of the criteria — and the loop resumes.**
 
@@ -148,9 +188,10 @@ The operation of the workspace root (`raw/` · `wiki/` · `index.md` · `RULES.m
 - **Ingest** — two entrances, both behind an approval gate. Curate with the five verdicts: ingest / merge / already covered / exclude / hold. When unsure, hold — don't guess. The most important number is not what you added but what you kept out.
   - **Source intake** (root `raw/` → `wiki/`): every source needs **one line of collection purpose (why)** — recorded in the root `logs/` at collection time. No purpose, no ingest — hold it. The agent reads the content, judges it against the purpose, and generates relation links seeded by that purpose.
   - **Project promotion** (Phase 6 feedback): promote **units of meaning**, not whole files — decisions, gate passes, and contract changes from the event log; verification verdicts; failures and lessons. Decisions → judgment pages, gates/milestones → event pages, lessons → `RULES.md` (with their origin — every task reads the rules before starting), improved templates → `templates/`.
-- **Query**: consult the workspace index (root `index.md` — the catalog of wiki pages, projects, and held problems) first, then answer. Reusable answers don't stay in chat — file them back into the wiki as new pages, so queries compound too.
-- **Lint**: once per project feedback cycle — contradictions between pages (check refute-links first), stale-rule pruning, orphan pages, unsourced claims.
+- **Query**: consult the workspace index (root `index.md` — the catalog of wiki pages, projects, and held problems) first, then answer. Reusable answers don't stay in chat — file them back into the wiki as new pages, so queries compound too. **The index must be link-closed: every document in the workspace is reachable from `index.md` by following links.** An index you cannot navigate is a folder listing with extra steps. And an index is a catalog, not a log — **edit it, never append**, or you end up with the same table twice.
+- **Lint**: once per project feedback cycle — **and make it a script, not a habit.** What it should decide by exit code: broken links; orphan documents (unreachable from `index.md`); folder and file naming rules; stale paths left behind by a rename; contradictions between pages (check refute-links first); stale rules; unsourced claims; and the Phase 0 contract checks. **A rule you have to remember is a rule you will eventually break — promote it to a check that fails the build.**
 - **Wiki page standard**: head each page with a type (concept / procedure / insight / event / judgment) · tags · date · source (external / own thinking) · evidence label (`[hypothesis]`/`[measured]`/`[proven]`). Body links to at least one related page, with the relation marked (supports / extends / refutes). **Typed pages plus typed links are what a second brain actually is.**
+- **Compound the interview too**: answers that repeat across projects (constraints, evaluators, permission boundaries) promote to a **standing conditions** page. The next project's interview opens with *"same as last time?"* and asks only what changed. The outer loop is supposed to compound knowledge — it should compound the cost of asking as well. The third project's interview is half the length of the first.
 - **Taste into files**: record recurring judgment patterns, measured failures, and the reasons for every rejection.
 
 ## Logs and progress
@@ -159,7 +200,7 @@ The operation of the workspace root (`raw/` · `wiki/` · `index.md` · `RULES.m
 - **Event log** (project `logs/log.md`, append-only): record decisions, gate passes, contract changes, phase completions, project source collections (with one line of purpose), and errors. Format standard: `## [YYYY-MM-DD HH:MM] type | title` + body. Keep the prefix and the log stays parseable with simple tools (grep etc.).
 - **Session records** (`logs/sessions/`, one file per session): write at session end — a summary + decisions made + the user's instructions verbatim + next steps.
 - **Progress file** (`PROGRESS.md`): one row per phase/milestone from the execution plan, each with status (pending / in progress / awaiting gate / done) + date + deliverable link. Progress = completed phases / total. Update immediately on phase transitions and gate passes — saving state comes before reporting.
-- **PROGRESS.md is the review hub**: rows awaiting a gate link to the file the human should open and the criteria to judge by (the contract's evaluation criteria, requirement IDs). The human starts at PROGRESS.md and moves only by links — never by digging through folders.
+- **`PROGRESS.md` is the review hub**: rows awaiting a gate link to the file the human should open and the criteria to judge by (the contract's evaluation criteria, requirement IDs). The human starts at `PROGRESS.md` and moves only by links — never by digging through folders.
 
 ## The three-sentence pattern — the basic language of delegation
 
@@ -179,38 +220,46 @@ The operation of the workspace root (`raw/` · `wiki/` · `index.md` · `RULES.m
    - ⑤ Plan first — for multi-step work, present a plan and get approval before executing.
 
    Add your own situational rules on top (response language, frequently used commands, recurring-task rules). **The constitution has four layers**: global → workspace constitution (outer-loop protocol) → shared project protocol `projects/CLAUDE.md` (inner-loop protocol) → the individual project constitution (Phase 2). Each layer stacks on the one above it, and in tools that load nested CLAUDE.md files hierarchically, this structure enforces itself.
-1. **Interview**: the fundamental problem (why) and the deliverable (what) / ship-and-compete or operate-and-serve / constraints (schedule, cost, staffing) / evaluators and their criteria / number of people and agents / any irreversible work / does the user have domain expertise. → Organize the answers into a draft contract for the first project and confirm with the user.
-2. **Scaffold**: install the workspace once; afterwards, every new project gets the full project skeleton of the default tree under `projects/` and starts from Phase 0. The default tree (name it as you like):
+1. **Scaffold first, then interview** — the interview record has to land somewhere immutable, so the folders come first. Ask the user where to install (default: a folder in the current directory), create the workspace once, then create the first project skeleton under `projects/`. Afterwards every new project gets the same skeleton and starts from Phase 0. The default tree — these are the names the scaffolder writes; rename them if you like, but rename them **in the script**, not per project:
 
    ```
    llm-delivery-loop/             ← workspace = outer loop (installed once)
    ├── CLAUDE.md                  # workspace constitution — identity/principles + outer-loop (wiki) protocol
    ├── RULES.md                   # prevention rules (the ratchet) — each with its origin
-   ├── index.md                   # workspace index — wiki + project list + held problems (query entry point)
+   ├── index.md                   # workspace index — link-closed catalog (query entry point)
    ├── raw/                       # second-brain source layer — project-independent collections (read-only)
    ├── wiki/                      # knowledge layer — the cross-project second brain
    ├── templates/                 # task prompt & document templates
    ├── logs/                      # outer-loop log — collection purposes, ingest verdicts, lint (log.md)
+   ├── tools/                     # the lint script and the project scaffolder
    └── projects/                  ← inner loop = one folder per project
-       ├── CLAUDE.md              # shared project protocol — Phase 0–6 gates, document & log standards
-       └── <project-name>/
+       ├── CLAUDE.md              # shared project protocol — Phase 0–6 gates, naming, document & log standards
+       └── YYYY-MM-DD_<name>/     ← start date, never renamed
+           ├── 00_CONTRACT.md     # Phase 0 · gate ①
+           ├── 01_REQUIREMENTS.md # Phase 1
+           ├── 03_EVIDENCE.md     # Phase 3 · gate ②
+           ├── 04_SCOPE.md        # Phase 4 · gate ③
+           ├── 05_engineering/    # Phase 5 deliverables (delivered versions frozen)
+           ├── 06_VERIFICATION.md # Phase 6 · gate ④
            ├── CLAUDE.md          # project constitution (Phase 2 — scope constraint, project-specific rules)
-           ├── CONTRACT.md        # the contract (Phase 0)
            ├── PROGRESS.md        # progress — the review hub
-           ├── phase-docs/        # REQUIREMENTS · EVIDENCE · SCOPE · VERIFICATION
-           ├── raw/               # this project's sources (RFP, meeting notes, survey materials)
-           ├── engineering/       # working results (Phase 5 — delivered versions frozen)
+           ├── raw/               # this project's sources + the interview record (immutable)
            └── logs/              # log.md (events) + sessions/ (session records)
    ```
 
+   Generate this with a script, not by hand — the naming convention is the first thing to drift. **Naming is not cosmetics here: it is what makes the phase order survive a file explorer.** Two scripts live in `tools/`: the scaffolder above, and the lint from the outer loop. The agent writes both during installation — they are not shipped with this document. Any language; what matters is that the lint decides by **exit code**, not by prose.
+
+2. **Interview → contract** — see **Phase 0** above for the full question set, the triggers, and the five exit tests. Preserve the answers verbatim with IDs in the new project's `raw/`, then organize them into the contract and confirm with the user. **Do not skip this and write the contract from inference** — that is the single most expensive shortcut in this document.
+
    Additionally: set the three permission tiers (unattended = read-only, always; reversible = backup first; irreversible = explicit re-confirmation) and a measurement baseline (measure the current value once, now).
-3. **Engrave the constitutions**: in the **workspace constitution** (skeleton of six parts — identity in one sentence / principles / how we work / permissions and limits / scope constraints / center), write the outer-loop protocol (Ingest·Query·Lint, wiki standards). In the **shared project protocol** (`projects/CLAUDE.md`), write the Phase 0–6 gate, document, and log standards, plus the instruction: **"Read the active project's contract (`CONTRACT.md`) before starting any work. Work outside the contract only after contract-change approval."** Transfer only the rules needed, rewritten in the user's own language — never copy this document wholesale. Purpose: a future session's agent behaves by the methodology without ever seeing this file.
-4. **Verify the installation**: create the first project folder under `projects/` and run Phase 0 once, producing a one-page contract (2W1H + constraints + evaluation criteria + execution plan). Negative test: feed a below-criteria artifact to the gate and confirm it is caught as FAIL. Report completion with this demonstrated behavior, not with words.
+3. **Engrave the constitutions**: in the **workspace constitution** (skeleton of six parts — identity in one sentence / principles / how we work / permissions and limits / scope constraints / center), write the outer-loop protocol (Ingest·Query·Lint, wiki standards). In the **shared project protocol** (`projects/CLAUDE.md`), write the Phase 0–6 gate, document, and log standards, plus the instruction: **"Read the active project's contract (`00_CONTRACT.md`) before starting any work. Work outside the contract only after contract-change approval."** Transfer only the rules needed, rewritten in the user's own language — never copy this document wholesale. Purpose: a future session's agent behaves by the methodology without ever seeing this file.
+4. **Verify the installation**: create the first project folder under `projects/` and run Phase 0 once — the interview first, then a one-page contract (2W1H + constraints + evaluation criteria + failure conditions + execution plan), then **T2 on that contract**. Negative tests, all three: feed a below-criteria contract to the gate and confirm FAIL; create a document that no link reaches and confirm the lint catches it as an orphan; create a wrongly-named project folder and confirm the lint catches it. Report completion with this demonstrated behavior, not with words.
 
 ## Principles
 
 - The human's job: set the criteria, judge at the gates. The agent's job: everything else.
-- This document is a pattern. Instantiate folder names, formats, and concrete gate shapes with your agent to fit the project.
+- This document is a pattern. Instantiate folder names, formats, and concrete gate shapes with your agent to fit the project — **but instantiate them once, in a script.** Every convention in here that is only written down is a convention that will drift.
+- The rules in this document came from things that broke. If something breaks for you, open an issue — that is how the ratchet turns.
 
 ---
 
