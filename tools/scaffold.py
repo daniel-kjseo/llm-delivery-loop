@@ -75,9 +75,17 @@ def init(root):
     print(root)
 
 
+NAME_OK = __import__("re").compile(r"^[A-Za-z0-9가-힣][A-Za-z0-9가-힣._-]*$")
+
+
 def new_project(root, name, date=None):
+    if not NAME_OK.match(name):
+        sys.exit(f"invalid project name (letters, digits, . _ - only; no path separators): {name!r}")
     date = date or datetime.date.today().isoformat()
-    proj = os.path.join(root, "projects", f"{date}_{name}")
+    projects = os.path.realpath(os.path.join(root, "projects"))
+    proj = os.path.realpath(os.path.join(projects, f"{date}_{name}"))
+    if os.path.dirname(proj) != projects:
+        sys.exit(f"refusing to write outside projects/: {proj}")
     if os.path.exists(proj):
         sys.exit(f"already exists: {proj}")
     for d in ["05_engineering", "raw", "logs/sessions"]:

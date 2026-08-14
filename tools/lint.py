@@ -2,9 +2,10 @@
 """LDL reference lint (stdlib only). Verdict by exit code: 0 = pass, 1 = fail.
 
   lint.py [workspace_root]     lint a workspace (default: current directory)
-  lint.py --selftest           conformance check: plants the three negative
-                               fixtures from installation step 4 in a temp
-                               workspace and fails unless all are caught
+  lint.py --selftest           conformance check: plants the step-4 negative
+                               fixtures plus empty-criteria, raw-deletion,
+                               malformed-state and name-traversal fixtures in a
+                               temp workspace and fails unless all are caught
 
 Checks
   L1 broken links      every relative link reachable from index.md resolves
@@ -117,10 +118,15 @@ class Lint:
 
         def section(title):
             m = re.search(rf"^#+ .*{title}.*?$(.*?)(?=^#+ |\Z)", text, re.M | re.S | re.I)
-            return m.group(1) if m else ""
+            if not m:
+                return ""
+            # annotation blockquotes are guidance, not contract content
+            return "\n".join(l for l in m.group(1).splitlines() if not l.lstrip().startswith(">"))
 
         crit = section("Evaluation criteria")
-        items = [l for l in crit.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l) and not l.strip().startswith(">")]
+        items = [l for l in crit.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
+        if not items:
+            self.err("L4", f"{rel}: no evaluation criteria - an empty pass line cannot gate anything")
         for l in items:
             if not re.search(r"judge:\s*(code|human|model|fresh-context)", l, re.I):
                 self.err("L4", f"{rel}: criterion without a named judge - {l.strip()[:50]}")
@@ -138,11 +144,21 @@ class Lint:
         state = {"raw": {}, "logs": {}}
         if os.path.exists(state_path):
             try:
-                state = json.load(open(state_path, encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+                loaded = json.load(open(state_path, encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError("state is not an object")
+                state = loaded
+            except (json.JSONDecodeError, OSError, ValueError):
                 self.err("L5", "lint state unreadable - delete logs/.lint-state.json to re-baseline")
                 return
+        # malformed-but-parseable state must degrade to a clean verdict, not a traceback
+        state.setdefault("raw", {})
+        state.setdefault("logs", {})
+        if not isinstance(state["raw"], dict) or not isinstance(state["logs"], dict):
+            self.err("L5", "lint state malformed - delete logs/.lint-state.json to re-baseline")
+            return
         # L5: raw/ hash manifest (root and per-project raw/)
+        seen_raw = set()
         for r, dirs, files in os.walk(self.root):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             if os.path.basename(r) != "raw":
@@ -150,10 +166,13 @@ class Lint:
             for f in files:
                 p = os.path.join(r, f)
                 key = self.rel(p)
+                seen_raw.add(key)
                 h = hashlib.sha256(open(p, "rb").read()).hexdigest()
                 if key in state["raw"] and state["raw"][key] != h:
                     self.err("L5", f"raw file changed (immutable): {key}")
                 state["raw"][key] = state["raw"].get(key, h)
+        for key in sorted(set(state["raw"]) - seen_raw):
+            self.err("L5", f"raw file deleted (immutable): {key}")
         # L6: append-only logs
         for r, dirs, files in os.walk(self.root):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
@@ -195,38 +214,82 @@ def selftest():
 
     tmp = tempfile.mkdtemp(prefix="ldl-selftest-")
     ws = os.path.join(tmp, "ws")
+    results = {}
     try:
         scaffold.init(ws)
         proj = scaffold.new_project(ws, "good", "2026-01-01")
-        # make the good project pass: fill the contract honestly
-        with open(os.path.join(proj, "00_CONTRACT.md"), "w", encoding="utf-8") as f:
-            f.write("# 00_CONTRACT — good\n\n[interview](raw/interview.md)\n\n## 2W1H\n- Why: real problem [IV-01]\n- What: one deliverable [IV-02]\n- How: build then verify [IV-03]\n\n## Constraints\n- one week [IV-04]\n\n## Evaluation criteria\n1. output exists — judge: code (test script) [IV-03]\n2. tone approved — judge: human (owner) [IV-05]\n\n## Failure conditions (three, concrete)\n1. wrong output shipped\n2. deadline missed\n3. rework exceeds two hours\n\n## Execution plan\n| phase | path | verify | gate | budget |\n")
+        good_contract = os.path.join(proj, "00_CONTRACT.md")
+        contract_text = (
+            "# 00_CONTRACT — good\n\n[interview](raw/interview.md)\n\n"
+            "## 2W1H\n- Why: real problem [IV-01]\n- What: one deliverable [IV-02]\n- How: build then verify [IV-03]\n\n"
+            "## Constraints\n- one week [IV-04]\n\n"
+            "## Evaluation criteria\n1. output exists — judge: code (test script) [IV-03]\n2. tone approved — judge: human (owner) [IV-05]\n\n"
+            "## Failure conditions (three, concrete)\n1. wrong output shipped\n2. deadline missed\n3. rework exceeds two hours\n\n"
+            "## Execution plan\n| phase | path | verify | gate | budget |\n"
+        )
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
         open(os.path.join(proj, "raw", "interview.md"), "w").write("IV-01 ...")
         idx = os.path.join(ws, "index.md")
-        with open(idx, "a", encoding="utf-8") as f:
-            f.write("- [good](projects/2026-01-01_good/PROGRESS.md)\n")
-        base = Lint(ws)
-        ok = base.run() == 0
-        if not ok:
-            print("SELFTEST FAIL: clean workspace should pass")
-            return 1
-        # fixture 1: below-criteria contract (empty fields, no IV, 2 failures, judge-less criterion)
-        bad = scaffold.new_project(ws, "bad", "2026-01-02")
-        with open(idx, "a", encoding="utf-8") as f:
-            f.write("- [bad](projects/2026-01-02_bad/PROGRESS.md)\n")
-        # fixture 2: orphan document
+        idx_text = open(idx, encoding="utf-8").read() + "- [good](projects/2026-01-01_good/PROGRESS.md)\n"
+        open(idx, "w", encoding="utf-8").write(idx_text)
+
+        l = Lint(ws)
+        results["clean workspace passes"] = l.run() == 0
+
+        # fixtures 1-3: below-criteria contract / orphan / bad folder name
+        scaffold.new_project(ws, "bad", "2026-01-02")
+        open(idx, "a", encoding="utf-8").write("- [bad](projects/2026-01-02_bad/PROGRESS.md)\n")
         open(os.path.join(ws, "wiki", "orphan.md"), "w").write("# orphan\n")
-        # fixture 3: wrongly named project folder
         os.makedirs(os.path.join(ws, "projects", "Bad Project"))
-        lint = Lint(ws)
-        lint.run()
-        got = "".join(lint.errors)
-        need = {"L4": "below-criteria contract", "L2": "orphan document", "L3": "wrong project name"}
-        missing = [f"{k} ({v})" for k, v in need.items() if f"[{k}]" not in got]
-        if missing:
-            print("SELFTEST FAIL: not caught -> " + ", ".join(missing))
+        l = Lint(ws); l.run(); got = "".join(l.errors)
+        results["below-criteria contract (L4)"] = "[L4]" in got
+        results["orphan document (L2)"] = "[L2]" in got
+        results["wrong project name (L3)"] = "[L3]" in got
+        # remove fixtures 1-3, verify clean again
+        shutil.rmtree(os.path.join(ws, "projects", "2026-01-02_bad"))
+        shutil.rmtree(os.path.join(ws, "projects", "Bad Project"))
+        os.remove(os.path.join(ws, "wiki", "orphan.md"))
+        open(idx, "w", encoding="utf-8").write(idx_text)
+        results["clean again after fixtures"] = Lint(ws).run() == 0
+
+        # fixture 4: empty evaluation criteria must fail the contract gate
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("1. output exists — judge: code (test script) [IV-03]\n2. tone approved — judge: human (owner) [IV-05]\n", ""))
+        l = Lint(ws); l.run()
+        results["empty criteria (L4)"] = any("no evaluation criteria" in e for e in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 5: raw deletion must fail L5 (baseline first, then delete)
+        assert Lint(ws).run() == 0  # baseline writes the manifest
+        rawf = os.path.join(proj, "raw", "interview.md")
+        os.remove(rawf)
+        l = Lint(ws); l.run()
+        results["raw deletion (L5)"] = any("deleted" in e for e in l.errors)
+        open(rawf, "w").write("IV-01 ...")
+        sp = os.path.join(ws, "logs", ".lint-state.json")
+        os.path.exists(sp) and os.remove(sp)
+
+        # fixture 6: malformed state must yield a clean FAIL, not a traceback
+        open(sp, "w").write('{"broken": 1}')
+        try:
+            Lint(ws).run()
+            results["malformed state (clean verdict)"] = True
+        except Exception:  # noqa: BLE001
+            results["malformed state (clean verdict)"] = False
+        os.path.exists(sp) and os.remove(sp)
+
+        # fixture 7: scaffold must refuse path-traversal project names
+        try:
+            scaffold.new_project(ws, "../escape", "2026-01-03")
+            results["name traversal refused"] = False
+        except SystemExit:
+            results["name traversal refused"] = not os.path.exists(os.path.join(ws, "escape"))
+
+        failed = [k for k, v in results.items() if not v]
+        if failed:
+            print("SELFTEST FAIL -> " + ", ".join(failed))
             return 1
-        print("SELFTEST PASS - clean workspace passes; all three negative fixtures caught")
+        print(f"SELFTEST PASS - {len(results)} checks: clean pass + structural, empty-criteria, raw-deletion, malformed-state, traversal fixtures all caught")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
