@@ -17,11 +17,13 @@ Checks
   L2 orphans           every managed .md is reachable from index.md
                        (raw/ is tracked by the manifest, not link-crawled)
   L3 naming            projects/ folders are YYYY-MM-DD_<name>
-  L4 contract gate     required sections present and non-empty; >=3 failure
-                       conditions; every criterion names its judge with a
-                       parenthesized method - judge: <type> (<method/who>);
-                       criteria and failure conditions carry no [hypothesis];
-                       the contract cites at least one interview ID (IV-nn)
+  L4 contract gate     required sections present, with real content - bare
+                       dashes, HTML comments and a lone table header do not
+                       count; >=3 failure conditions; every criterion names
+                       its judge with a non-blank parenthesized method -
+                       judge: <type> (<method/who>); criteria and failure
+                       conditions carry no [hypothesis]; the contract cites
+                       at least one interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
   L6 log append-only   logs/**/log.md may only grow; rewritten history fails
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
@@ -124,6 +126,14 @@ class Lint:
         text = self.read_text(c, "L4")
         if text is None:
             return
+        text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
+
+        def substantive(body):
+            # content = at least one line carrying a word character; a lone
+            # table header is scaffolding, not a plan
+            lines = [ln for ln in body.splitlines() if re.search(r"\w", ln)]
+            table = [ln for ln in lines if ln.lstrip().startswith("|")]
+            return len(lines) - (1 if table else 0) >= 1
 
         def section(title):
             # line-anchored: only a real heading line opens a section — the same
@@ -144,7 +154,7 @@ class Lint:
         for sec in ["2W1H", "Constraints", "Evaluation criteria", "Failure conditions", "Execution plan"]:
             if not re.search(rf"^#+ .*{re.escape(sec)}", text, re.M | re.I):
                 self.err("L4", f"{rel}: required section missing - {sec}")
-            elif not section(sec).strip():
+            elif not substantive(section(sec)):
                 self.err("L4", f"{rel}: required section empty - {sec}")
         for field in ["Why", "What", "How"]:
             m = re.search(rf"^- ?\*{{0,2}}{field}\*{{0,2}}[ \t]*:[ \t]*(.*)$", text, re.M)
@@ -159,7 +169,7 @@ class Lint:
         if not items:
             self.err("L4", f"{rel}: no evaluation criteria - an empty pass line cannot gate anything")
         for l in items:
-            if not re.search(r"judge:\s*(code|human|model|fresh-context)\s*\([^)]+\)", l, re.I):
+            if not re.search(r"judge:\s*(code|human|model|fresh-context)\s*\([^)]*\w[^)]*\)", l, re.I):
                 self.err("L4", f"{rel}: criterion without judge: <type> (<method/who>) - {l.strip()[:50]}")
         fail = section("Failure conditions")
         fails = [l for l in fail.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
@@ -265,6 +275,7 @@ def selftest():
             "## Evaluation criteria\n1. output exists — judge: code (test script) [IV-03]\n2. tone approved — judge: human (owner) [IV-05]\n\n"
             "## Failure conditions (three, concrete)\n1. wrong output shipped\n2. deadline missed\n3. rework exceeds two hours\n\n"
             "## Execution plan\n| phase | path | verify | gate | budget |\n"
+            "| P5+P6 | 05_engineering/ | test script | yes | one week |\n"
         )
         open(good_contract, "w", encoding="utf-8").write(contract_text)
         open(os.path.join(proj, "raw", "interview.md"), "w").write("IV-01 ...")
@@ -405,6 +416,39 @@ def selftest():
             except Exception:  # noqa: BLE001
                 results["unreadable raw (L5, exact)"] = False
             os.remove(os.path.join(proj, "raw", "dangling"))
+
+        # fixture 14: whitespace inside the judge parentheses is not a method
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("judge: human (owner)", "judge: human (   )"))
+        l = Lint(ws); l.run()
+        results["whitespace judge (L4, exact)"] = (
+            f"[L4] {goodrel}: criterion without judge: <type> (<method/who>) - "
+            "2. tone approved — judge: human (   ) [IV-05]" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 15: a dash-only section is a placeholder, not content
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("- one week [IV-04]\n", "-\n"))
+        l = Lint(ws); l.run()
+        results["dash-only section (L4, exact)"] = (
+            f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 16: a table header with no phase row is not an execution plan
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("| P5+P6 | 05_engineering/ | test script | yes | one week |\n", ""))
+        l = Lint(ws); l.run()
+        results["header-only plan (L4, exact)"] = (
+            f"[L4] {goodrel}: required section empty - Execution plan" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 17: an HTML comment is not contract content
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("- one week [IV-04]\n", "<!-- TODO fill in -->\n"))
+        l = Lint(ws); l.run()
+        results["comment-only section (L4, exact)"] = (
+            f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
 
         failed = [k for k, v in results.items() if not v]
         if failed:
