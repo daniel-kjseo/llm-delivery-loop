@@ -3,9 +3,11 @@
 
   lint.py [workspace_root]     lint a workspace (default: current directory)
   lint.py --selftest           conformance check: plants the step-4 negative
-                               fixtures plus empty-criteria, raw-deletion,
-                               malformed-state and name-traversal fixtures in a
-                               temp workspace and fails unless all are caught
+                               fixtures plus empty-criteria, empty-section,
+                               bare-judge, raw-deletion, malformed-state and
+                               name-traversal fixtures in a temp workspace,
+                               one at a time, and fails unless each is caught
+                               by its exact error at its exact path
 
 Checks
   L1 broken links      every relative link reachable from index.md resolves
@@ -13,9 +15,10 @@ Checks
                        (raw/ is tracked by the manifest, not link-crawled)
   L3 naming            projects/ folders are YYYY-MM-DD_<name>
   L4 contract gate     required sections present and non-empty; >=3 failure
-                       conditions; every criterion names a judge; criteria and
-                       failure conditions carry no [hypothesis]; the contract
-                       cites at least one interview ID (IV-nn)
+                       conditions; every criterion names its judge with a
+                       parenthesized method - judge: <type> (<method/who>);
+                       criteria and failure conditions carry no [hypothesis];
+                       the contract cites at least one interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
   L6 log append-only   logs/**/log.md may only grow; rewritten history fails
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
@@ -48,7 +51,7 @@ class Lint:
         for m in LINK.finditer(text):
             t = m.group(1).strip().split("#")[0]
             if not t or t.startswith(("http://", "https://", "mailto:")):
-                continue  # external links: warning-level only, never a failure
+                continue  # external URLs: outside lint scope - never fetched, never a verdict
             out.append(os.path.normpath(os.path.join(os.path.dirname(path), t)))
         return out
 
@@ -105,16 +108,6 @@ class Lint:
             self.err("L4", f"contract missing: {rel}")
             return
         text = open(c, encoding="utf-8").read()
-        for sec in ["2W1H", "Constraints", "Evaluation criteria", "Failure conditions", "Execution plan"]:
-            if not re.search(rf"^#+ .*{re.escape(sec)}", text, re.M | re.I):
-                self.err("L4", f"{rel}: required section missing - {sec}")
-        for field in ["Why", "What", "How"]:
-            m = re.search(rf"^- ?\*{{0,2}}{field}\*{{0,2}}[ \t]*:[ \t]*(.*)$", text, re.M)
-            if m is None or not m.group(1).strip():
-                self.err("L4", f"{rel}: {field} is empty")
-        body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
-        if not re.search(r"IV-\d{2}", body):
-            self.err("L4", f"{rel}: no interview ID (IV-nn) cited - a contract written from inference")
 
         def section(title):
             m = re.search(rf"^#+ .*{title}.*?$(.*?)(?=^#+ |\Z)", text, re.M | re.S | re.I)
@@ -123,13 +116,26 @@ class Lint:
             # annotation blockquotes are guidance, not contract content
             return "\n".join(l for l in m.group(1).splitlines() if not l.lstrip().startswith(">"))
 
+        for sec in ["2W1H", "Constraints", "Evaluation criteria", "Failure conditions", "Execution plan"]:
+            if not re.search(rf"^#+ .*{re.escape(sec)}", text, re.M | re.I):
+                self.err("L4", f"{rel}: required section missing - {sec}")
+            elif not section(sec).strip():
+                self.err("L4", f"{rel}: required section empty - {sec}")
+        for field in ["Why", "What", "How"]:
+            m = re.search(rf"^- ?\*{{0,2}}{field}\*{{0,2}}[ \t]*:[ \t]*(.*)$", text, re.M)
+            if m is None or not m.group(1).strip():
+                self.err("L4", f"{rel}: {field} is empty")
+        body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
+        if not re.search(r"IV-\d{2}", body):
+            self.err("L4", f"{rel}: no interview ID (IV-nn) cited - a contract written from inference")
+
         crit = section("Evaluation criteria")
         items = [l for l in crit.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
         if not items:
             self.err("L4", f"{rel}: no evaluation criteria - an empty pass line cannot gate anything")
         for l in items:
-            if not re.search(r"judge:\s*(code|human|model|fresh-context)", l, re.I):
-                self.err("L4", f"{rel}: criterion without a named judge - {l.strip()[:50]}")
+            if not re.search(r"judge:\s*(code|human|model|fresh-context)\s*\([^)]+\)", l, re.I):
+                self.err("L4", f"{rel}: criterion without judge: <type> (<method/who>) - {l.strip()[:50]}")
         fail = section("Failure conditions")
         fails = [l for l in fail.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
         if len(fails) < 3:
@@ -236,21 +242,46 @@ def selftest():
         l = Lint(ws)
         results["clean workspace passes"] = l.run() == 0
 
-        # fixtures 1-3: below-criteria contract / orphan / bad folder name
+        # fixtures 1-3, planted one at a time: the verdict is the exact error
+        # text at the exact path, never "some error of that class" — and each
+        # teardown re-verifies clean, so one fixture cannot mask another
+        badrel = os.path.join("projects", "2026-01-02_bad", "00_CONTRACT.md")
         scaffold.new_project(ws, "bad", "2026-01-02")
-        open(idx, "a", encoding="utf-8").write("- [bad](projects/2026-01-02_bad/PROGRESS.md)\n")
-        open(os.path.join(ws, "wiki", "orphan.md"), "w").write("# orphan\n")
-        os.makedirs(os.path.join(ws, "projects", "Bad Project"))
-        l = Lint(ws); l.run(); got = "".join(l.errors)
-        results["below-criteria contract (L4)"] = "[L4]" in got
-        results["orphan document (L2)"] = "[L2]" in got
-        results["wrong project name (L3)"] = "[L3]" in got
-        # remove fixtures 1-3, verify clean again
+        open(idx, "w", encoding="utf-8").write(idx_text + "- [bad](projects/2026-01-02_bad/PROGRESS.md)\n")
+        l = Lint(ws); l.run()
+        expected = [
+            f"[L1] broken link: {badrel} -> {os.path.join('projects', '2026-01-02_bad', 'raw', 'interview.md')}",
+            f"[L4] {badrel}: required section empty - Constraints",
+            f"[L4] {badrel}: required section empty - Execution plan",
+            f"[L4] {badrel}: Why is empty",
+            f"[L4] {badrel}: What is empty",
+            f"[L4] {badrel}: How is empty",
+            f"[L4] {badrel}: no interview ID (IV-nn) cited - a contract written from inference",
+            f"[L4] {badrel}: no evaluation criteria - an empty pass line cannot gate anything",
+            f"[L4] {badrel}: fewer than three failure conditions",
+        ]
+        results["below-criteria contract (L4, exact)"] = sorted(l.errors) == sorted(expected)
         shutil.rmtree(os.path.join(ws, "projects", "2026-01-02_bad"))
-        shutil.rmtree(os.path.join(ws, "projects", "Bad Project"))
-        os.remove(os.path.join(ws, "wiki", "orphan.md"))
         open(idx, "w", encoding="utf-8").write(idx_text)
-        results["clean again after fixtures"] = Lint(ws).run() == 0
+        results["clean after fixture 1"] = Lint(ws).run() == 0
+
+        # fixture 2: orphan document, alone — the orphan is the only error
+        open(os.path.join(ws, "wiki", "orphan.md"), "w").write("# orphan\n")
+        l = Lint(ws); l.run()
+        results["orphan document (L2, exact)"] = l.errors == [
+            f"[L2] orphan (unreachable from index.md): {os.path.join('wiki', 'orphan.md')}"]
+        os.remove(os.path.join(ws, "wiki", "orphan.md"))
+        results["clean after fixture 2"] = Lint(ws).run() == 0
+
+        # fixture 3: wrongly named project folder, alone (its missing contract
+        # is part of the expected verdict, not noise)
+        os.makedirs(os.path.join(ws, "projects", "Bad Project"))
+        l = Lint(ws); l.run()
+        results["wrong project name (L3, exact)"] = sorted(l.errors) == sorted([
+            "[L3] project folder naming (YYYY-MM-DD_<name>): projects/Bad Project",
+            f"[L4] contract missing: {os.path.join('projects', 'Bad Project', '00_CONTRACT.md')}"])
+        shutil.rmtree(os.path.join(ws, "projects", "Bad Project"))
+        results["clean after fixture 3"] = Lint(ws).run() == 0
 
         # fixture 4: empty evaluation criteria must fail the contract gate
         open(good_contract, "w", encoding="utf-8").write(
@@ -285,11 +316,29 @@ def selftest():
         except SystemExit:
             results["name traversal refused"] = not os.path.exists(os.path.join(ws, "escape"))
 
+        # fixture 8: a required section that is present but empty must fail
+        goodrel = os.path.join("projects", "2026-01-01_good", "00_CONTRACT.md")
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("- one week [IV-04]\n", ""))
+        l = Lint(ws); l.run()
+        results["empty required section (L4, exact)"] = (
+            f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 9: a judge with no parenthesized method must fail
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("judge: human (owner)", "judge: human"))
+        l = Lint(ws); l.run()
+        results["bare judge (L4, exact)"] = (
+            f"[L4] {goodrel}: criterion without judge: <type> (<method/who>) - "
+            "2. tone approved — judge: human [IV-05]" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
         failed = [k for k, v in results.items() if not v]
         if failed:
             print("SELFTEST FAIL -> " + ", ".join(failed))
             return 1
-        print(f"SELFTEST PASS - {len(results)} checks: clean pass + structural, empty-criteria, raw-deletion, malformed-state, traversal fixtures all caught")
+        print(f"SELFTEST PASS - {len(results)} checks: clean pass + structural, empty-criteria, empty-section, bare-judge, raw-deletion, malformed-state, traversal fixtures all caught, each by its exact error")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

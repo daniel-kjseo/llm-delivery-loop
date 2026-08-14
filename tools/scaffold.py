@@ -33,7 +33,7 @@ CONTRACT = """# 00_CONTRACT — {name} (Phase 0 · gate 1)
 ## Constraints
 
 ## Evaluation criteria
-> One per line. Each names its judge: `judge: code (<instrument>)` or `judge: human (<who>)` or `judge: model (<which>)` or `judge: fresh-context`.
+> One per line. Each names its judge and method in one grammar: `judge: code (<instrument>)` / `judge: human (<who>)` / `judge: model (<which>)` / `judge: fresh-context (<of what>)`. A bare type with no parenthesis fails the lint.
 1.
 
 ## Failure conditions (three, concrete)
@@ -43,6 +43,12 @@ CONTRACT = """# 00_CONTRACT — {name} (Phase 0 · gate 1)
 
 ## Execution plan
 > Per phase: deliverable path / verification method / gate or not / time budget.
+
+## Verification setup
+> Named at contract time so verification is never improvised. The human checks these at gate 1 — the lint does not, in this version.
+- Verifier instances: <who or what judges each criterion — the named person, model, or script>
+- Lint command: <the exact command run before gate 1 and every feedback cycle>
+- Approver: <the human who signs each gate>
 
 ## Exit tests (gate 1 opens only after all five pass)
 - T1 can it fail: / T2 stranger: / T3 judge: / T4 constraint collision: / T5 primary source:
