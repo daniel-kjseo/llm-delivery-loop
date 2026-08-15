@@ -17,23 +17,44 @@ Checks
   L2 orphans           every managed .md is reachable from index.md
                        (raw/ is tracked by the manifest, not link-crawled)
   L3 naming            projects/ folders are YYYY-MM-DD_<name>
-  L4 contract gate     required sections present, with real content - bare
-                       dashes or underscores, HTML comments/tags/entities
-                       and a lone table header do not count; >=3 failure
-                       conditions; every criterion names its judge with an
-                       alphanumeric parenthesized method - judge: <type>
-                       (<method/who>); criteria and failure conditions carry
-                       no [hypothesis]; the contract cites at least one
-                       interview ID (IV-nn)
+  L4 contract gate     required sections present, with real content judged
+                       as it renders (tags/comments dropped, character
+                       references decoded) - bare dashes or underscores and
+                       a lone table header do not count; >=3 failure
+                       conditions; every criterion names its judge with a
+                       parenthesized method that renders alphanumeric text -
+                       judge: <type> (<method/who>); criteria and failure
+                       conditions carry no [hypothesis]; the contract cites
+                       at least one interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
   L6 log append-only   logs/**/log.md may only grow; rewritten history fails
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
 """
 import hashlib, json, os, re, sys
+from html.parser import HTMLParser
 
 LINK = re.compile(r"\]\(([^)]+)\)")
 NAME_RULE = re.compile(r"^\d{4}-\d{2}-\d{2}_.+")
 SKIP_DIRS = {".git", "node_modules", "tools", "__pycache__"}
+
+
+class _Visible(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def visible_text(markup):
+    """Markup as it renders: tags and comments dropped, character references
+    decoded, text nodes kept - one normalization shared by every content check,
+    instead of a regex per discovered bypass."""
+    p = _Visible()
+    p.feed(markup)
+    p.close()
+    return "".join(p.parts)
 
 
 class Lint:
@@ -130,12 +151,10 @@ class Lint:
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
         def substantive(body):
-            # content = at least one line carrying an alphanumeric character
-            # after markup is discounted; underscores render as nothing readable
-            # (___ is a horizontal rule) and a lone table header is scaffolding
-            body = re.sub(r"<[^>]+>", " ", body)             # HTML tags
-            body = re.sub(r"&#?[A-Za-z0-9]+;", " ", body)    # HTML entities
-            lines = [ln for ln in body.splitlines() if re.search(r"[^\W_]", ln)]
+            # content = what the body renders as (visible_text), then at least
+            # one line carrying an alphanumeric character; underscores render
+            # as a horizontal rule and a lone table header is scaffolding
+            lines = [ln for ln in visible_text(body).splitlines() if re.search(r"[^\W_]", ln)]
             table = [ln for ln in lines if ln.lstrip().startswith("|")]
             return len(lines) - (1 if table else 0) >= 1
 
@@ -173,7 +192,8 @@ class Lint:
         if not items:
             self.err("L4", f"{rel}: no evaluation criteria - an empty pass line cannot gate anything")
         for l in items:
-            if not re.search(r"judge:\s*(code|human|model|fresh-context)\s*\([^)]*[^\W_)][^)]*\)", l, re.I):
+            m = re.search(r"judge:\s*(code|human|model|fresh-context)\s*\(([^)]*)\)", l, re.I)
+            if not m or not re.search(r"[^\W_]", visible_text(m.group(2))):
                 self.err("L4", f"{rel}: criterion without judge: <type> (<method/who>) - {l.strip()[:50]}")
         fail = section("Failure conditions")
         fails = [l for l in fail.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
@@ -478,6 +498,30 @@ def selftest():
         l = Lint(ws); l.run()
         results["underscore-rule section (L4, exact)"] = (
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixtures 22-23: markup is not a judge identity either
+        for markup, tag in (("<br>", "br judge"), ("&nbsp;", "nbsp judge")):
+            open(good_contract, "w", encoding="utf-8").write(
+                contract_text.replace("judge: human (owner)", f"judge: human ({markup})"))
+            l = Lint(ws); l.run()
+            results[f"{tag} (L4, exact)"] = (
+                f"[L4] {goodrel}: criterion without judge: <type> (<method/who>) - "
+                f"2. tone approved — judge: human ({markup}) [IV-05]" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 24: a tag with '>' inside a quoted attribute still renders as nothing
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("- one week [IV-04]\n", '<span title="x>y"></span>\n'))
+        l = Lint(ws); l.run()
+        results["quoted-attr span section (L4, exact)"] = (
+            f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 25 (positive): character references that render visible text ARE content
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("- one week [IV-04]\n", "&#49;&#50;&#51;\n"))
+        results["visible entity passes"] = Lint(ws).run() == 0
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
         failed = [k for k, v in results.items() if not v]
