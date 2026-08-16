@@ -7,7 +7,7 @@
 Rename folders or files here, in the script — never per project.
 Rewrites in other languages are fine as long as `lint.py --selftest` still passes.
 """
-import argparse, datetime, os, sys
+import argparse, datetime, os, shutil, sys
 
 WS_DIRS = ["raw", "wiki", "templates", "logs", "tools", "projects"]
 
@@ -51,7 +51,11 @@ CONTRACT = """# 00_CONTRACT — {name} (Phase 0 · gate 1)
 - Approver: <the human who signs each gate>
 
 ## Exit tests (gate 1 opens only after all five pass)
-- T1 can it fail: / T2 stranger: / T3 judge: / T4 constraint collision: / T5 primary source:
+- T1 can it fail:
+- T2 stranger:
+- T3 judge:
+- T4 constraint collision:
+- T5 primary source:
 """
 
 PROJ_FILES = {
@@ -78,6 +82,12 @@ def init(root):
         os.makedirs(os.path.join(root, d), exist_ok=True)
     for rel, content in WS_FILES.items():
         write(os.path.join(root, rel), content)
+    source_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in ("scaffold.py", "lint.py"):
+        source = os.path.join(source_dir, name)
+        target = os.path.join(root, "tools", name)
+        if os.path.isfile(source) and not os.path.exists(target):
+            shutil.copy2(source, target)
     print(root)
 
 
@@ -98,6 +108,17 @@ def new_project(root, name, date=None):
         os.makedirs(os.path.join(proj, d), exist_ok=True)
     for rel, content in PROJ_FILES.items():
         write(os.path.join(proj, rel), content.format(name=name))
+    index = os.path.join(root, "index.md")
+    if not os.path.isfile(index):
+        sys.exit(f"workspace index missing (run init first): {index}")
+    entry = f"- [{name}](projects/{date}_{name}/PROGRESS.md)\n"
+    text = open(index, encoding="utf-8").read()
+    marker = "## Projects\n"
+    if marker not in text:
+        sys.exit(f"workspace index has no Projects section: {index}")
+    if entry not in text:
+        with open(index, "w", encoding="utf-8") as f:
+            f.write(text.replace(marker, marker + entry, 1))
     print(proj)
     return proj
 

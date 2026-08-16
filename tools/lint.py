@@ -17,18 +17,20 @@ Checks
   L2 orphans           every managed .md is reachable from index.md
                        (raw/ is tracked by the manifest, not link-crawled)
   L3 naming            projects/ folders are YYYY-MM-DD_<name>
-  L4 contract gate     required sections present, with real content judged
+  L4 contract gate     required sections and verification fields present, with real content judged
                        as it renders (tags/comments dropped, character
                        references decoded) - bare dashes or underscores and
                        a lone table header do not count; >=3 failure
                        conditions; every criterion names its judge with a
                        parenthesized method that renders alphanumeric text -
                        judge: <type> (<method/who>); criteria and failure
-                       conditions carry no [hypothesis]; the contract cites
+                       conditions carry no [hypothesis]; at least one criterion
+                       has a separated non-code judge; the contract cites
                        at least one interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
   L6 log append-only   logs/**/log.md may only grow; rewritten history fails
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
+  L7 installation      workspace/shared-protocol template sentinels are gone
 """
 import hashlib, json, os, re, sys
 from html.parser import HTMLParser
@@ -174,7 +176,12 @@ class Lint:
                     return "\n".join(body)
             return ""
 
-        for sec in ["2W1H", "Constraints", "Evaluation criteria", "Failure conditions", "Execution plan"]:
+        def concrete(value):
+            value = visible_text(value).strip()
+            return bool(re.search(r"[^\W_]", value)) and not re.fullmatch(r"<[^>]+>", value)
+
+        for sec in ["2W1H", "Constraints", "Evaluation criteria", "Failure conditions", "Execution plan",
+                    "Verification setup", "Exit tests"]:
             if not re.search(rf"^#+ .*{re.escape(sec)}", text, re.M | re.I):
                 self.err("L4", f"{rel}: required section missing - {sec}")
             elif not substantive(section(sec)):
@@ -183,6 +190,19 @@ class Lint:
             m = re.search(rf"^- ?\*{{0,2}}{field}\*{{0,2}}[ \t]*:[ \t]*(.*)$", text, re.M)
             if m is None or not m.group(1).strip():
                 self.err("L4", f"{rel}: {field} is empty")
+        if re.search(r"^#+ .*Verification setup", text, re.M | re.I):
+            verification = section("Verification setup")
+            for field in ["Verifier instances", "Lint command", "Approver"]:
+                m = re.search(rf"^- ?\*{{0,2}}{re.escape(field)}\*{{0,2}}[ \t]*:[ \t]*(.*)$",
+                              verification, re.M | re.I)
+                if m is None or not concrete(m.group(1)):
+                    self.err("L4", f"{rel}: Verification setup field empty or placeholder - {field}")
+        if re.search(r"^#+ .*Exit tests", text, re.M | re.I):
+            exits = section("Exit tests")
+            for test in range(1, 6):
+                m = re.search(rf"^-\s*T{test}\b[^:]*:[ \t]*(.*)$", exits, re.M | re.I)
+                if m is None or not concrete(m.group(1)):
+                    self.err("L4", f"{rel}: Exit test missing or empty - T{test}")
         body = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
         if not re.search(r"IV-\d{2}", body):
             self.err("L4", f"{rel}: no interview ID (IV-nn) cited - a contract written from inference")
@@ -195,6 +215,9 @@ class Lint:
             m = re.search(r"judge:\s*(code|human|model|fresh-context)\s*\(([^)]*)\)", l, re.I)
             if not m or not re.search(r"[^\W_]", visible_text(m.group(2))):
                 self.err("L4", f"{rel}: criterion without judge: <type> (<method/who>) - {l.strip()[:50]}")
+        if items and not any(re.search(r"judge:\s*(human|model|fresh-context)\s*\(", l, re.I)
+                             for l in items):
+            self.err("L4", f"{rel}: at least one criterion must use a non-code judge")
         fail = section("Failure conditions")
         fails = [l for l in fail.splitlines() if re.match(r"^\s*(\d+\.|[-*])\s+\S", l)]
         if len(fails) < 3:
@@ -265,10 +288,24 @@ class Lint:
             os.makedirs(os.path.dirname(state_path), exist_ok=True)
             json.dump(state, open(state_path, "w", encoding="utf-8"), indent=1)
 
+    # -- L7 ---------------------------------------------------------------
+    def check_installation(self):
+        sentinels = {
+            "CLAUDE.md": "Engraved at install step 3: identity in one sentence",
+            os.path.join("projects", "CLAUDE.md"): "Engraved at install step 3: Phase 0-6 gates",
+        }
+        for rel, sentinel in sentinels.items():
+            path = os.path.join(self.root, rel)
+            if os.path.isfile(path):
+                text = self.read_text(path, "L7")
+                if text is not None and sentinel in text:
+                    self.err("L7", f"installation stub remains: {rel}")
+
     # -- run --------------------------------------------------------------
     def run(self):
         self.check_links()
         self.check_projects()
+        self.check_installation()
         self.check_state()
         if self.errors:
             print(f"LINT FAIL - {len(self.errors)} issue(s)")
@@ -281,7 +318,7 @@ class Lint:
 
 # -- conformance selftest -------------------------------------------------
 def selftest():
-    import shutil, tempfile
+    import shutil, subprocess, tempfile
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import scaffold
 
@@ -290,7 +327,13 @@ def selftest():
     results = {}
     try:
         scaffold.init(ws)
+        results["init copies both tools"] = all(
+            os.path.isfile(os.path.join(ws, "tools", name))
+            for name in ("scaffold.py", "lint.py"))
         proj = scaffold.new_project(ws, "good", "2026-01-01")
+        results["new project is indexed"] = (
+            "projects/2026-01-01_good/PROGRESS.md"
+            in open(os.path.join(ws, "index.md"), encoding="utf-8").read())
         good_contract = os.path.join(proj, "00_CONTRACT.md")
         contract_text = (
             "# 00_CONTRACT — good\n\n[interview](raw/interview.md)\n\n"
@@ -300,15 +343,30 @@ def selftest():
             "## Failure conditions (three, concrete)\n1. wrong output shipped\n2. deadline missed\n3. rework exceeds two hours\n\n"
             "## Execution plan\n| phase | path | verify | gate | budget |\n"
             "| P5+P6 | 05_engineering/ | test script | yes | one week |\n"
+            "\n## Verification setup\n"
+            "- Verifier instances: unit test and owner review\n"
+            "- Lint command: python3 tools/lint.py .\n"
+            "- Approver: project owner\n"
+            "\n## Exit tests\n"
+            "- T1 can it fail: three failure conditions are listed\n"
+            "- T2 stranger: fresh-context review passed\n"
+            "- T3 judge: every criterion names its judge\n"
+            "- T4 constraint collision: scope fits one week\n"
+            "- T5 primary source: IV-01 through IV-05 cited\n"
         )
         open(good_contract, "w", encoding="utf-8").write(contract_text)
         open(os.path.join(proj, "raw", "interview.md"), "w").write("IV-01 ...")
         idx = os.path.join(ws, "index.md")
-        idx_text = open(idx, encoding="utf-8").read() + "- [good](projects/2026-01-01_good/PROGRESS.md)\n"
-        open(idx, "w", encoding="utf-8").write(idx_text)
+        idx_text = open(idx, encoding="utf-8").read()
+        for rel, content in {
+            "CLAUDE.md": "# Workspace constitution\n\nLDL workspace: contract first; query index; preserve raw; lint gates.\n",
+            "projects/CLAUDE.md": "# Shared project protocol\n\nRead the active contract; follow Phase 0-6 gates; append event logs.\n",
+        }.items():
+            open(os.path.join(ws, rel), "w", encoding="utf-8").write(content)
 
         l = Lint(ws)
         results["clean workspace passes"] = l.run() == 0
+        goodrel = os.path.join("projects", "2026-01-01_good", "00_CONTRACT.md")
 
         # fixtures 1-3, planted one at a time: the verdict is the exact error
         # text at the exact path, never "some error of that class" — and each
@@ -324,6 +382,14 @@ def selftest():
             f"[L4] {badrel}: Why is empty",
             f"[L4] {badrel}: What is empty",
             f"[L4] {badrel}: How is empty",
+            f"[L4] {badrel}: Verification setup field empty or placeholder - Verifier instances",
+            f"[L4] {badrel}: Verification setup field empty or placeholder - Lint command",
+            f"[L4] {badrel}: Verification setup field empty or placeholder - Approver",
+            f"[L4] {badrel}: Exit test missing or empty - T1",
+            f"[L4] {badrel}: Exit test missing or empty - T2",
+            f"[L4] {badrel}: Exit test missing or empty - T3",
+            f"[L4] {badrel}: Exit test missing or empty - T4",
+            f"[L4] {badrel}: Exit test missing or empty - T5",
             f"[L4] {badrel}: no interview ID (IV-nn) cited - a contract written from inference",
             f"[L4] {badrel}: no evaluation criteria - an empty pass line cannot gate anything",
             f"[L4] {badrel}: fewer than three failure conditions",
@@ -351,14 +417,49 @@ def selftest():
         shutil.rmtree(os.path.join(ws, "projects", "Bad Project"))
         results["clean after fixture 3"] = Lint(ws).run() == 0
 
-        # fixture 4: empty evaluation criteria must fail the contract gate
+        # fixture 4: the two procedural gate sections are part of the contract,
+        # not optional template advice
+        stripped = contract_text.split("\n## Verification setup\n", 1)[0]
+        open(good_contract, "w", encoding="utf-8").write(stripped)
+        l = Lint(ws); l.run()
+        results["missing verification and exit sections (L4, exact)"] = sorted(l.errors) == sorted([
+            f"[L4] {goodrel}: required section missing - Verification setup",
+            f"[L4] {goodrel}: required section missing - Exit tests",
+        ])
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 5: syntax-green automation alone is not verifier separation
+        open(good_contract, "w", encoding="utf-8").write(
+            contract_text.replace("judge: human (owner)", "judge: code (tone script)"))
+        l = Lint(ws); l.run()
+        results["all-code criteria refused (L4, exact)"] = (
+            f"[L4] {goodrel}: at least one criterion must use a non-code judge" in l.errors)
+        open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # fixture 6: an untouched installation sentinel is not an engraved protocol
+        stub = scaffold.WS_FILES["CLAUDE.md"]
+        engraved = open(os.path.join(ws, "CLAUDE.md"), encoding="utf-8").read()
+        open(os.path.join(ws, "CLAUDE.md"), "w", encoding="utf-8").write(stub)
+        l = Lint(ws); l.run()
+        results["protocol stub refused (L7, exact)"] = l.errors == [
+            "[L7] installation stub remains: CLAUDE.md"]
+        open(os.path.join(ws, "CLAUDE.md"), "w", encoding="utf-8").write(engraved)
+
+        # CLI contract: selftest is a complete mode, not a substring that
+        # silently swallows a requested workspace lint
+        p = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "--selftest", "."],
+            text=True, capture_output=True)
+        results["selftest mixed args refused"] = p.returncode == 2
+
+        # fixture 7: empty evaluation criteria must fail the contract gate
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("1. output exists — judge: code (test script) [IV-03]\n2. tone approved — judge: human (owner) [IV-05]\n", ""))
         l = Lint(ws); l.run()
         results["empty criteria (L4)"] = any("no evaluation criteria" in e for e in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 5: raw deletion must fail L5 (baseline first, then delete)
+        # fixture 8: raw deletion must fail L5 (baseline first, then delete)
         assert Lint(ws).run() == 0  # baseline writes the manifest
         rawf = os.path.join(proj, "raw", "interview.md")
         os.remove(rawf)
@@ -368,7 +469,7 @@ def selftest():
         sp = os.path.join(ws, "logs", ".lint-state.json")
         os.path.exists(sp) and os.remove(sp)
 
-        # fixture 6: malformed state must yield a clean FAIL, not a traceback
+        # fixture 9: malformed state must yield a clean FAIL, not a traceback
         open(sp, "w").write('{"broken": 1}')
         try:
             Lint(ws).run()
@@ -377,15 +478,14 @@ def selftest():
             results["malformed state (clean verdict)"] = False
         os.path.exists(sp) and os.remove(sp)
 
-        # fixture 7: scaffold must refuse path-traversal project names
+        # fixture 10: scaffold must refuse path-traversal project names
         try:
             scaffold.new_project(ws, "../escape", "2026-01-03")
             results["name traversal refused"] = False
         except SystemExit:
             results["name traversal refused"] = not os.path.exists(os.path.join(ws, "escape"))
 
-        # fixture 8: a required section that is present but empty must fail
-        goodrel = os.path.join("projects", "2026-01-01_good", "00_CONTRACT.md")
+        # fixture 11: a required section that is present but empty must fail
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("- one week [IV-04]\n", ""))
         l = Lint(ws); l.run()
@@ -393,7 +493,7 @@ def selftest():
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 9: a judge with no parenthesized method must fail
+        # fixture 12: a judge with no parenthesized method must fail
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("judge: human (owner)", "judge: human"))
         l = Lint(ws); l.run()
@@ -402,19 +502,19 @@ def selftest():
             "2. tone approved — judge: human [IV-05]" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 10: section names mentioned in body text are not headings —
+        # fixture 13: section names mentioned in body text are not headings —
         # a good contract whose execution plan says "evaluation criteria" must pass
         open(good_contract, "w", encoding="utf-8").write(
             contract_text + "| P6 | 06_VERIFICATION.md | evaluation criteria and failure conditions check | gate | 1d |\n")
         results["decoy phrase in body passes"] = Lint(ws).run() == 0
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 11: a markdown link with a title is still a link, not a broken path
+        # fixture 14: a markdown link with a title is still a link, not a broken path
         open(idx, "w", encoding="utf-8").write(idx_text + '- [c](CLAUDE.md "the constitution")\n')
         results["titled link passes"] = Lint(ws).run() == 0
         open(idx, "w", encoding="utf-8").write(idx_text)
 
-        # fixture 12: a crawled file that is not UTF-8 must be a verdict, not a traceback
+        # fixture 15: a crawled file that is not UTF-8 must be a verdict, not a traceback
         open(os.path.join(ws, "wiki", "binary.md"), "wb").write(b"# ok\n\xff\xfe garbage\n")
         open(idx, "w", encoding="utf-8").write(idx_text + "- [b](wiki/binary.md)\n")
         try:
@@ -426,7 +526,7 @@ def selftest():
         os.remove(os.path.join(ws, "wiki", "binary.md"))
         open(idx, "w", encoding="utf-8").write(idx_text)
 
-        # fixture 13: a raw file the lint cannot hash must be a verdict, not a
+        # fixture 16: a raw file the lint cannot hash must be a verdict, not a
         # traceback (skipped where the host forbids creating symlinks)
         try:
             os.symlink("nonexistent-target", os.path.join(proj, "raw", "dangling"))
@@ -441,7 +541,7 @@ def selftest():
                 results["unreadable raw (L5, exact)"] = False
             os.remove(os.path.join(proj, "raw", "dangling"))
 
-        # fixture 14: whitespace inside the judge parentheses is not a method
+        # fixture 17: whitespace inside the judge parentheses is not a method
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("judge: human (owner)", "judge: human (   )"))
         l = Lint(ws); l.run()
@@ -450,7 +550,7 @@ def selftest():
             "2. tone approved — judge: human (   ) [IV-05]" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 15: a dash-only section is a placeholder, not content
+        # fixture 18: a dash-only section is a placeholder, not content
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("- one week [IV-04]\n", "-\n"))
         l = Lint(ws); l.run()
@@ -458,7 +558,7 @@ def selftest():
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 16: a table header with no phase row is not an execution plan
+        # fixture 19: a table header with no phase row is not an execution plan
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("| P5+P6 | 05_engineering/ | test script | yes | one week |\n", ""))
         l = Lint(ws); l.run()
@@ -466,7 +566,7 @@ def selftest():
             f"[L4] {goodrel}: required section empty - Execution plan" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 17: an HTML comment is not contract content
+        # fixture 20: an HTML comment is not contract content
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("- one week [IV-04]\n", "<!-- TODO fill in -->\n"))
         l = Lint(ws); l.run()
@@ -474,7 +574,7 @@ def selftest():
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixtures 18-19: markup that renders as nothing is not content either
+        # fixtures 21-22: markup that renders as nothing is not content either
         for markup, tag in (("<br>", "br-only"), ("&nbsp;", "nbsp-only")):
             open(good_contract, "w", encoding="utf-8").write(
                 contract_text.replace("- one week [IV-04]\n", markup + "\n"))
@@ -483,7 +583,7 @@ def selftest():
                 f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 20: underscores are not a judge identity
+        # fixture 23: underscores are not a judge identity
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("judge: human (owner)", "judge: human (___)"))
         l = Lint(ws); l.run()
@@ -492,7 +592,7 @@ def selftest():
             "2. tone approved — judge: human (___) [IV-05]" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 21: an underscore horizontal rule is as empty as a dashed one
+        # fixture 24: an underscore horizontal rule is as empty as a dashed one
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("- one week [IV-04]\n", "___\n"))
         l = Lint(ws); l.run()
@@ -500,7 +600,7 @@ def selftest():
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixtures 22-23: markup is not a judge identity either
+        # fixtures 25-26: markup is not a judge identity either
         for markup, tag in (("<br>", "br judge"), ("&nbsp;", "nbsp judge")):
             open(good_contract, "w", encoding="utf-8").write(
                 contract_text.replace("judge: human (owner)", f"judge: human ({markup})"))
@@ -510,7 +610,7 @@ def selftest():
                 f"2. tone approved — judge: human ({markup}) [IV-05]" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 24: a tag with '>' inside a quoted attribute still renders as nothing
+        # fixture 27: a tag with '>' inside a quoted attribute still renders as nothing
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("- one week [IV-04]\n", '<span title="x>y"></span>\n'))
         l = Lint(ws); l.run()
@@ -518,7 +618,7 @@ def selftest():
             f"[L4] {goodrel}: required section empty - Constraints" in l.errors)
         open(good_contract, "w", encoding="utf-8").write(contract_text)
 
-        # fixture 25 (positive): character references that render visible text ARE content
+        # fixture 28 (positive): character references that render visible text ARE content
         open(good_contract, "w", encoding="utf-8").write(
             contract_text.replace("- one week [IV-04]\n", "&#49;&#50;&#51;\n"))
         results["visible entity passes"] = Lint(ws).run() == 0
@@ -535,7 +635,13 @@ def selftest():
 
 
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
+    if sys.argv[1:] == ["--selftest"]:
         sys.exit(selftest())
+    if "--selftest" in sys.argv:
+        print("usage: lint.py --selftest  OR  lint.py [workspace_root]", file=sys.stderr)
+        sys.exit(2)
+    if len(sys.argv) > 2:
+        print("usage: lint.py --selftest  OR  lint.py [workspace_root]", file=sys.stderr)
+        sys.exit(2)
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     sys.exit(Lint(root).run())
