@@ -31,6 +31,13 @@ Checks
   L6 log append-only   logs/**/log.md may only grow; rewritten history fails
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
   L7 installation      workspace/shared-protocol template sentinels are gone
+  L8 gate integrity    v0.3 gate ledger vocabulary, approval evidence,
+                       contract version and monotonic order
+  L9 evidence chain    measured/proven claims retain source, date, window and
+                       reproducer; quantitative projects retain a model
+  L10 safety model     impact HOLD propagates to action/readiness verdicts
+  L11 verdict split    harness/product/readiness/method verdicts cannot imply
+                       one another or erase historical violations
 """
 import hashlib, json, os, re, sys
 from html.parser import HTMLParser
@@ -57,6 +64,27 @@ def visible_text(markup):
     p.feed(markup)
     p.close()
     return "".join(p.parts)
+
+
+def structural_text(markup):
+    """Markdown content eligible to define LDL structure.
+
+    Fenced code and HTML comments are examples/hidden content, never live
+    headings, ledgers, or verdicts. Normalize once before every parser.
+    """
+    markup = re.sub(r"<!--.*?-->", "", markup, flags=re.S)
+    kept, fence_char, fence_len = [], None, 0
+    for line in markup.splitlines():
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if fence_char is None and marker:
+            fence_char, fence_len = marker.group(1)[0], len(marker.group(1))
+            continue
+        if fence_char is not None:
+            if re.match(rf"^\s*{re.escape(fence_char)}{{{fence_len},}}\s*$", line):
+                fence_char, fence_len = None, 0
+            continue
+        kept.append(line)
+    return visible_text("\n".join(kept))
 
 
 class Lint:
@@ -106,6 +134,79 @@ class Lint:
                         out.append(p)
         return out
 
+    def section_text(self, text, title):
+        """Return the body under an exact markdown heading."""
+        lines = structural_text(text).splitlines()
+        for i, line in enumerate(lines):
+            if re.match(rf"^#+\s+{re.escape(title)}\s*$", line.strip(), re.I):
+                body = []
+                for nxt in lines[i + 1:]:
+                    if re.match(r"^#+\s+", nxt):
+                        break
+                    body.append(nxt)
+                return "\n".join(body)
+        return ""
+
+    def table_rows(self, text, title, columns, code, rel):
+        body = self.section_text(text, title)
+        if not body:
+            self.err(code, f"{rel}: required section missing - {title}")
+            return []
+        lines = [line.strip() for line in body.splitlines() if line.strip().startswith("|")]
+        if len(lines) < 2:
+            self.err(code, f"{rel}: table missing - {title}")
+            return []
+        header = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        if header != columns:
+            self.err(code, f"{rel}: wrong columns in {title} - expected {' / '.join(columns)}")
+            return []
+        separator = [cell.strip() for cell in lines[1].strip("|").split("|")]
+        if len(separator) != len(columns) or any(not re.fullmatch(r":?-{3,}:?", cell) for cell in separator):
+            self.err(code, f"{rel}: malformed markdown separator in {title}")
+            return []
+        rows = []
+        for line in lines[2:]:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) != len(columns):
+                self.err(code, f"{rel}: malformed row in {title}")
+                continue
+            rows.append(dict(zip(columns, cells)))
+        return rows
+
+    def scalar_field(self, text, name):
+        wanted = re.sub(r"[\W_]+", "", name).lower()
+        matches = []
+        for line in structural_text(text).splitlines():
+            match = re.match(r"^-\s*(.*?)\s*:\s*(.*?)\s*$", line)
+            if not match:
+                continue
+            rendered_label = re.sub(r"[\W_]+", "", match.group(1)).lower()
+            if rendered_label == wanted:
+                matches.append(match.group(2).strip())
+        return matches[0] if len(matches) == 1 else ""
+
+    def substantive_cell(self, value):
+        value = visible_text(value).strip()
+        if not re.search(r"[^\W_]", value):
+            return False
+        if re.fullmatch(r"<[^>]+>|N/?A", value, re.I):
+            return False
+        rendered = re.sub(r"[*_`~\[\]()]+", "", value)
+        return not re.search(r"\b(?:TODO|TBD|placeholder|pending|fill(?: this)?(?: in)?)\b", rendered, re.I)
+
+    def structural_text(self, text):
+        return structural_text(text)
+
+    def local_link_target(self, base, value):
+        match = LINK.search(value)
+        if not match:
+            return None
+        target = match.group(1).split("#", 1)[0].strip()
+        target = re.sub(r"""\s+("[^"]*"|'[^']*')$""", "", target)
+        if target.startswith(("http://", "https://", "mailto:")):
+            return target
+        return os.path.normpath(os.path.join(base, target))
+
     # -- L1 + L2 ----------------------------------------------------------
     def check_links(self):
         index = os.path.join(self.root, "index.md")
@@ -140,6 +241,7 @@ class Lint:
             if not NAME_RULE.match(d):
                 self.err("L3", f"project folder naming (YYYY-MM-DD_<name>): projects/{d}")
             self.check_contract(full)
+            self.check_integrity_model(full)
 
     def check_contract(self, proj):
         c = os.path.join(proj, "00_CONTRACT.md")
@@ -226,10 +328,16 @@ class Lint:
             if "[hypothesis]" in body:
                 self.err("L4", f"{rel}: [hypothesis] inside {name} - an undecidable pass line is pre-contract research")
 
+    def check_integrity_model(self, proj):
+        # Kept in a small module so the v0.3 schema can evolve without turning
+        # the original reference lint into one giant parser.
+        import integrity
+        integrity.check(self, proj)
+
     # -- L5 + L6 ----------------------------------------------------------
     def check_state(self):
         state_path = os.path.join(self.root, "logs", ".lint-state.json")
-        state = {"raw": {}, "logs": {}}
+        state = {"raw": {}, "logs": {}, "schema": None}
         if os.path.exists(state_path):
             try:
                 loaded = json.load(open(state_path, encoding="utf-8"))
@@ -245,6 +353,17 @@ class Lint:
         if not isinstance(state["raw"], dict) or not isinstance(state["logs"], dict):
             self.err("L5", "lint state malformed - delete logs/.lint-state.json to re-baseline")
             return
+        marker = os.path.join(self.root, ".ldl-version")
+        marker_value = None
+        if os.path.isfile(marker):
+            marker_value = self.read_text(marker, "L7")
+            marker_value = marker_value.strip() if marker_value is not None else None
+            if marker_value != "0.3.0":
+                self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
+        if state.get("schema") and marker_value is None:
+            self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
+        if marker_value is not None:
+            state["schema"] = state.get("schema") or marker_value
         # L5: raw/ hash manifest (root and per-project raw/)
         seen_raw = set()
         for r, dirs, files in os.walk(self.root):
@@ -327,9 +446,11 @@ def selftest():
     results = {}
     try:
         scaffold.init(ws)
-        results["init copies both tools"] = all(
+        results["init copies v0.3 tools"] = all(
             os.path.isfile(os.path.join(ws, "tools", name))
-            for name in ("scaffold.py", "lint.py"))
+            for name in ("scaffold.py", "lint.py", "integrity.py"))
+        version_marker = os.path.join(ws, ".ldl-version")
+        os.remove(version_marker)  # fixtures 1-28 prove legacy compatibility
         proj = scaffold.new_project(ws, "good", "2026-01-01")
         results["new project is indexed"] = (
             "projects/2026-01-01_good/PROGRESS.md"
@@ -373,6 +494,10 @@ def selftest():
         # teardown re-verifies clean, so one fixture cannot mask another
         badrel = os.path.join("projects", "2026-01-02_bad", "00_CONTRACT.md")
         scaffold.new_project(ws, "bad", "2026-01-02")
+        with open(os.path.join(ws, badrel), encoding="utf-8") as handle:
+            bad_contract_text = handle.read()
+        bad_contract_text = re.sub(r"\n## Governance profile\n.*?(?=\n## 2W1H)", "", bad_contract_text, flags=re.S)
+        open(os.path.join(ws, badrel), "w", encoding="utf-8").write(bad_contract_text)
         open(idx, "w", encoding="utf-8").write(idx_text + "- [bad](projects/2026-01-02_bad/PROGRESS.md)\n")
         l = Lint(ws); l.run()
         expected = [
@@ -623,6 +748,55 @@ def selftest():
             contract_text.replace("- one week [IV-04]\n", "&#49;&#50;&#51;\n"))
         results["visible entity passes"] = Lint(ws).run() == 0
         open(good_contract, "w", encoding="utf-8").write(contract_text)
+
+        # v0.3 integrity model: activate the schema on the same clean project,
+        # then plant one defect at a time. Legacy projects remain readable but
+        # cannot claim these stronger verdicts without a Governance profile.
+        open(version_marker, "w", encoding="utf-8").write("0.3.0\n")
+        v3_contract = contract_text.replace(
+            "## 2W1H\n", "## Governance profile\n- Contract version: v1\n- Approval mode: human\n- Quantitative claims: no\n- Risk level: low\n\n## 2W1H\n").replace(
+            "- Approver: project owner\n", "- Approver: project owner\n- Verifier workspace: external reviews\n- Target access: read-only\n")
+        progress_path = os.path.join(proj, "PROGRESS.md")
+        progress_v3 = """# PROGRESS — good\n\n## Phase progress\n| Phase | Status | Date | Deliverable |\n|---|---|---|---|\n| P0 contract | done | 2026-01-01 | [contract](00_CONTRACT.md) |\n| P1 requirements | pending | | [requirements](01_REQUIREMENTS.md) |\n| P2 structure | pending | | [constitution](CLAUDE.md) |\n| P3 research | pending | | [evidence](03_EVIDENCE.md) |\n| P4 scoping | pending | | [scope](04_SCOPE.md) |\n| P5+P6 increments | pending | | [verification](06_VERIFICATION.md) |\n\n## Gate ledger\n| Gate | Verdict | Contract version | Approval mode | Approver | Approved at | Evidence |\n|---|---|---|---|---|---|---|\n| G1 | PASS | v1 | human | owner | 2026-01-01T10:00:00Z | [approval](raw/approval.md) |\n| G2 | PENDING | v1 | human | | | |\n| G3 | PENDING | v1 | human | | | |\n| G4 | PENDING | v1 | human | | | |\n\n[contract](00_CONTRACT.md) [requirements](01_REQUIREMENTS.md) [evidence](03_EVIDENCE.md) [scope](04_SCOPE.md) [verification](06_VERIFICATION.md) [constitution](CLAUDE.md) [events](logs/log.md)\n"""
+        evidence_v3 = """# evidence\n\n## Evidence ledger\n| Claim ID | Label | Claim | Source artifact | Captured at | Scope/window | Transform/reproducer | Status |\n|---|---|---|---|---|---|---|---|\n| C-01 | [measured] | observed | [source](raw/source.txt) | 2026-01-01 | one run | direct | ACTIVE |\n"""
+        scope_v3 = """# scope\n\n## Impact dimensions\n| Dimension ID | Status | Evidence |\n|---|---|---|\n| D-01 | PASS | [evidence](03_EVIDENCE.md) |\n\n## Action readiness\n| Action ID | Impact dimensions | Preconditions | Approval tier | Approval evidence | Canary | Rollback | Ready |\n|---|---|---|---|---|---|---|---|\n| A-01 | D-01 | G1 PASS | 1 | [approval](raw/approval.md) | sample | restore | YES |\n"""
+        verification_v3 = """# verification\n\n## Requirement verdicts\n| Requirement ID | Verdict | Evidence |\n|---|---|---|\n| R-01 | NOT_RUN | pending |\n\n## Final verdicts\n- Harness: NOT_RUN\n- Product: NOT_RUN\n- Execution readiness: HOLD\n- Method conformance: PASS\n- Historical violations: NONE\n- Independent verifier: fresh-context (owner)\n- Target mutation: 0 files\n"""
+        open(good_contract, "w", encoding="utf-8").write(v3_contract)
+        requirements_v3 = """# requirements\n\n## Requirements ledger\n| Requirement ID | Type | Priority | Requirement | Verification | Source |\n|---|---|---|---|---|---|\n| R-01 | functional | must | produce output | test script | (b) IV-03 |\n"""
+        open(os.path.join(proj, "01_REQUIREMENTS.md"), "w", encoding="utf-8").write(requirements_v3)
+        open(progress_path, "w", encoding="utf-8").write(progress_v3)
+        open(os.path.join(proj, "03_EVIDENCE.md"), "w", encoding="utf-8").write(evidence_v3)
+        open(os.path.join(proj, "04_SCOPE.md"), "w", encoding="utf-8").write(scope_v3)
+        open(os.path.join(proj, "06_VERIFICATION.md"), "w", encoding="utf-8").write(verification_v3)
+        open(os.path.join(proj, "raw", "approval.md"), "w").write("owner approves Gate 1 for contract v1")
+        open(os.path.join(proj, "raw", "source.txt"), "w").write("source")
+        open(os.path.join(proj, "logs", "log.md"), "w").write("# events\nGATE-PASS: G1 contract=v1\n")
+        os.path.exists(sp) and os.remove(sp)
+        results["v0.3 clean integrity model passes"] = Lint(ws).run() == 0
+
+        open(progress_path, "w", encoding="utf-8").write(progress_v3.replace("| G2 | PENDING |", "| G2 | PARTIAL PASS |"))
+        results["v0.3 partial gate verdict refused"] = any("invalid gate verdict" in e for e in (lambda x: (x.run(), x.errors)[1])(Lint(ws)))
+        open(progress_path, "w", encoding="utf-8").write(progress_v3.replace("| G3 | PENDING | v1 | human | | | |", "| G3 | PASS | v1 | human | owner | 2026-01-03T10:00:00Z | [approval](raw/approval.md) |"))
+        results["v0.3 gate order refused"] = any("G3 PASS while G2 is not PASS" in e for e in (lambda x: (x.run(), x.errors)[1])(Lint(ws)))
+        open(progress_path, "w", encoding="utf-8").write(progress_v3)
+
+        ep = os.path.join(proj, "03_EVIDENCE.md")
+        open(ep, "w", encoding="utf-8").write(evidence_v3.replace("[source](raw/source.txt)", ""))
+        results["v0.3 source-less measured claim refused"] = any("missing source artifact" in e for e in (lambda x: (x.run(), x.errors)[1])(Lint(ws)))
+        open(ep, "w", encoding="utf-8").write(evidence_v3)
+
+        scp = os.path.join(proj, "04_SCOPE.md")
+        open(scp, "w", encoding="utf-8").write(scope_v3.replace("| D-01 | PASS |", "| D-01 | HOLD |"))
+        results["v0.3 HOLD propagates to actions"] = any("ready while impact dimension" in e for e in (lambda x: (x.run(), x.errors)[1])(Lint(ws)))
+        open(scp, "w", encoding="utf-8").write(scope_v3)
+
+        vp = os.path.join(proj, "06_VERIFICATION.md")
+        open(vp, "w", encoding="utf-8").write(verification_v3.replace("- Product: NOT_RUN", "- Product: PASS"))
+        results["v0.3 NOT_RUN blocks Product PASS"] = any("Product PASS requires every requirement PASS" in e for e in (lambda x: (x.run(), x.errors)[1])(Lint(ws)))
+        open(vp, "w", encoding="utf-8").write(verification_v3.replace("Historical violations: NONE", "Historical violations: PRESENT"))
+        results["v0.3 history cannot be retroactively passed"] = any("historical violations require" in e for e in (lambda x: (x.run(), x.errors)[1])(Lint(ws)))
+        open(vp, "w", encoding="utf-8").write(verification_v3)
+        os.path.exists(sp) and os.remove(sp)
 
         failed = [k for k, v in results.items() if not v]
         if failed:

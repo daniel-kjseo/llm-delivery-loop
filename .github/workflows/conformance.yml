@@ -1,0 +1,27 @@
+name: LDL conformance
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile tools
+        run: python -m py_compile tools/scaffold.py tools/lint.py tools/integrity.py
+      - name: Reference selftest
+        run: python tools/lint.py --selftest
+      - name: v0.3 hostile scenarios
+        run: python tests/test_v030.py
