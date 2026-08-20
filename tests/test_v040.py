@@ -165,6 +165,7 @@ class V040Tests(unittest.TestCase):
             return {"path": rel, "sha256": hashlib.sha256(open(path, "rb").read()).hexdigest()}
         manifest = {
             "schema": "ldl-mvp-evidence-v1",
+            "maker": "maker-agent",
             "increment": "MVP-1",
             "user_journey": "user submits one input and receives one verified result",
             "deterministic": {"status": "PASS", "command": "python tests.py", "checks": 17,
@@ -176,6 +177,14 @@ class V040Tests(unittest.TestCase):
         }
         with open(os.path.join(self.proj, "05_engineering", "evidence", "mvp1.json"), "w", encoding="utf-8") as handle:
             json.dump(manifest, handle)
+        experiment_manifest = {
+            "schema": "ldl-experiment-evidence-v1", "experiment": "EXP-1",
+            "source": "behavior-telemetry", "observations": 5,
+            "metric": "request rate", "result": "4 of 5 users requested export",
+            "artifact": artifact("05_engineering/evidence/experiments/exp1.txt"),
+        }
+        with open(os.path.join(self.proj, "05_engineering", "evidence", "experiments", "exp1.json"), "w", encoding="utf-8") as handle:
+            json.dump(experiment_manifest, handle)
         release_manifest = {
             "schema": "ldl-release-evidence-v1", "release": "RELEASE-1", "increment": "MVP-1",
             "live_url": "https://example.test/mvp", "released_at": "2026-01-02T00:00:00Z",
@@ -220,6 +229,12 @@ class V040Tests(unittest.TestCase):
     def prepare_launch_docs(self):
         for phase in ("P1 requirements", "P2 structure", "P4 scoping"):
             self.replace("PROGRESS.md", f"| {phase} | pending | |", f"| {phase} | done | 2026-01-01 |")
+
+    def pass_release1(self):
+        self.pass_g1()
+        self.prepare_launch_docs()
+        self.pass_mvp1()
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |", "| RELEASE-1 | PASS | MVP-1 | low-reversible | PASS | PASS | PASS | https://example.test/mvp | Daniel | 2026-01-02T00:00:00Z | [release](05_engineering/evidence/release.json) |")
 
     def assert_error(self, fragment):
         errors = self.errors()
@@ -272,12 +287,13 @@ class V040Tests(unittest.TestCase):
         self.assert_error("PASS increment requires measured experiment signal")
 
     def test_measured_experiment_allows_feedback_driven_increment(self):
+        self.pass_release1()
         path = os.path.join(self.proj, "PROGRESS.md")
         text = open(path, encoding="utf-8").read()
-        anchor = "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |"
+        anchor = "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |"
         extra = anchor + "\n| F-1 | EXP-1 | add requested export | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/increments/f1.txt) |"
         text = text.replace(anchor, extra)
-        text = text.replace("| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |", "| EXP-1 | real users request export | add export | request rate | MEASURED | [signal](05_engineering/evidence/experiments/exp1.txt) | EXPAND |")
+        text = text.replace("| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |", "| EXP-1 | real users request export | add export | request rate | MEASURED | [signal](05_engineering/evidence/experiments/exp1.json) | EXPAND |")
         open(path, "w", encoding="utf-8").write(text)
         self.assertEqual([], self.errors())
 
@@ -392,6 +408,66 @@ class V040Tests(unittest.TestCase):
         self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
         self.assert_error("independent verifier must be separated from maker")
         self.assert_error("artifact path escapes boundary")
+
+    def test_fresh_context_maker_is_not_independent(self):
+        manifest_path = os.path.join(self.proj, "05_engineering", "evidence", "mvp1.json")
+        manifest = json.load(open(manifest_path, encoding="utf-8"))
+        manifest["independent"]["verifier"] = "fresh-context-maker"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.pass_mvp1()
+        self.assert_error("independent verifier must be separated from maker")
+
+    def test_measured_feature_cannot_precede_mvp_release(self):
+        self.pass_mvp1()
+        path = os.path.join(self.proj, "PROGRESS.md")
+        text = open(path, encoding="utf-8").read()
+        anchor = "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |"
+        text = text.replace(anchor, anchor + "\n| F-1 | EXP-1 | export requested by users | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/increments/f1.txt) |")
+        text = text.replace("| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |", "| EXP-1 | real users request export | add export | request rate | MEASURED | [signal](05_engineering/evidence/experiments/exp1.json) | EXPAND |")
+        open(path, "w", encoding="utf-8").write(text)
+        self.assert_error("post-MVP PASS increment requires MVP-1 Release PASS")
+
+    def test_measured_experiment_requires_substantive_typed_evidence(self):
+        self.replace("PROGRESS.md", "| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |", "| EXP-1 | | | | MEASURED | [signal](05_engineering/evidence/experiments/exp1.json) | ITERATE |")
+        self.assert_error("measured experiment missing Hypothesis")
+        self.assert_error("experiment evidence identity/metric mismatch")
+
+    def test_one_experiment_and_artifact_cannot_authorize_two_features(self):
+        self.pass_release1()
+        path = os.path.join(self.proj, "PROGRESS.md")
+        text = open(path, encoding="utf-8").read()
+        anchor = "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |"
+        additions = (
+            "\n| F-1 | EXP-1 | export requested by users | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/increments/f1.txt) |"
+            "\n| F-2 | EXP-1 | second export variant | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/increments/f1.txt) |"
+        )
+        text = text.replace(anchor, anchor + additions)
+        text = text.replace("| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |", "| EXP-1 | real users request export | add export | request rate | MEASURED | [signal](05_engineering/evidence/experiments/exp1.json) | EXPAND |")
+        open(path, "w", encoding="utf-8").write(text)
+        self.assert_error("PASS increments must use distinct primary artifacts")
+        self.assert_error("each measured experiment can authorize only one PASS increment")
+
+    def test_release_rejects_empty_host_wrong_approver_future_and_copied_evidence(self):
+        self.pass_g1()
+        self.prepare_launch_docs()
+        self.pass_mvp1()
+        same = b"omnibus copied claim\n"
+        manifest_path = os.path.join(self.proj, "05_engineering", "evidence", "release.json")
+        manifest = json.load(open(manifest_path, encoding="utf-8"))
+        for section in ("smoke", "telemetry", "rollback", "feedback"):
+            artifact_path = os.path.join(self.proj, manifest[section]["artifact"]["path"])
+            open(artifact_path, "wb").write(same)
+            manifest[section]["artifact"]["sha256"] = hashlib.sha256(same).hexdigest()
+        manifest["live_url"] = "https://"
+        manifest["released_at"] = "2999-01-02T00:00:00Z"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |", "| RELEASE-1 | PASS | MVP-1 | low-reversible | PASS | PASS | PASS | https:// | maker-agent | 2999-01-02T00:00:00Z | [release](05_engineering/evidence/release.json) |")
+        self.assert_error("requires https live artifact")
+        self.assert_error("approver must match G1 approver")
+        self.assert_error("Released at cannot be in the future")
+        self.assert_error("artifact hashes must be distinct")
 
     def test_completion_requires_cost_ledger_data(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")

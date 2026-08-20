@@ -13,7 +13,8 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 PACKET_MAX_BYTES = 8192
 RELAY_SUMMARY_MAX_CHARS = 1500
@@ -61,6 +62,17 @@ def valid_utc_timestamp(value):
     except ValueError:
         return False
     return True
+
+
+def utc_datetime(value):
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def valid_https_url(value):
+    if not isinstance(value, str):
+        return False
+    parsed = urlsplit(value)
+    return parsed.scheme == "https" and bool(parsed.hostname) and parsed.username is None and parsed.password is None
 
 
 def verify_packet(path, root=None):
@@ -210,6 +222,9 @@ def verify_mvp_evidence(path, project_root, increment):
         return [f"MVP evidence is not valid JSON: {exc}"]
     if not isinstance(evidence, dict) or evidence.get("schema") != MVP_EVIDENCE_SCHEMA:
         return [f"MVP evidence schema must be {MVP_EVIDENCE_SCHEMA}"]
+    maker = evidence.get("maker")
+    if not isinstance(maker, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", maker):
+        errors.append("MVP evidence maker must be a stable ID")
     if evidence.get("increment") != increment:
         errors.append(f"MVP evidence increment mismatch: {evidence.get('increment')}")
     if not isinstance(evidence.get("user_journey"), str) or not evidence["user_journey"].strip():
@@ -238,8 +253,12 @@ def verify_mvp_evidence(path, project_root, increment):
         for field in ("command", "instrument", "verifier"):
             if field in fields and (not isinstance(section.get(field), str) or not section[field].strip()):
                 errors.append(f"MVP evidence {name} invalid {field}")
-        if name == "independent" and not re.match(r"^(fresh-context|different-model|domain-expert|human)\b", str(section.get("verifier", "")), re.I):
-            errors.append("MVP evidence independent verifier must be separated from maker")
+        if name == "independent":
+            verifier = str(section.get("verifier", ""))
+            if (not re.fullmatch(r"[A-Za-z0-9._-]+", verifier)
+                    or verifier.lower() == str(maker).lower()
+                    or re.search(r"maker|self|author|builder", verifier, re.I)):
+                errors.append("MVP evidence independent verifier must be separated from maker")
         artifact = section.get("artifact")
         if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
             errors.append(f"MVP evidence {name} artifact must be path+sha256")
@@ -272,7 +291,7 @@ def verify_release_evidence(path, project_root, release_id, increment, live_url,
         errors.append("release evidence identity mismatch")
     if evidence.get("live_url") != live_url or evidence.get("released_at") != released_at:
         errors.append("release evidence URL/time does not match release ledger")
-    if not re.match(r"^https://", str(evidence.get("live_url", ""))):
+    if not valid_https_url(evidence.get("live_url")):
         errors.append("release evidence live_url must be https")
     released_at = str(evidence.get("released_at", ""))
     if not valid_utc_timestamp(released_at):
@@ -284,6 +303,7 @@ def verify_release_evidence(path, project_root, release_id, increment, live_url,
         "feedback": ("READY", "channel"),
     }
     targets = []
+    hashes = []
     release_root = os.path.join(project_root, "05_engineering", "evidence", "release")
     for name, (status, *fields) in sections.items():
         section = evidence.get(name)
@@ -311,9 +331,44 @@ def verify_release_evidence(path, project_root, release_id, increment, live_url,
             errors.append(f"release evidence {name} artifact hash mismatch")
         else:
             targets.append(target)
+            hashes.append(artifact["sha256"])
     if len(targets) != len(set(targets)):
         errors.append("release evidence artifacts must be distinct")
+    if len(hashes) != len(set(hashes)):
+        errors.append("release evidence artifact hashes must be distinct")
     return errors
+
+
+def verify_experiment_evidence(path, project_root, experiment_id, metric):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            evidence = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"experiment evidence is not valid JSON: {exc}"], ""
+    errors = []
+    if not isinstance(evidence, dict) or evidence.get("schema") != "ldl-experiment-evidence-v1":
+        return ["experiment evidence schema must be ldl-experiment-evidence-v1"], ""
+    if evidence.get("experiment") != experiment_id or evidence.get("metric") != metric:
+        errors.append("experiment evidence identity/metric mismatch")
+    if evidence.get("source") not in {"user-feedback", "behavior-telemetry", "user-interview"}:
+        errors.append("experiment evidence source invalid")
+    if not isinstance(evidence.get("observations"), int) or evidence["observations"] <= 0:
+        errors.append("experiment evidence observations must be positive")
+    if not isinstance(evidence.get("result"), str) or not evidence["result"].strip():
+        errors.append("experiment evidence result missing")
+    artifact = evidence.get("artifact")
+    if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
+        errors.append("experiment evidence artifact must be path+sha256")
+        return errors, ""
+    root = os.path.join(project_root, "05_engineering", "evidence", "experiments")
+    target, target_error = _project_file(project_root, artifact["path"], root)
+    if target_error:
+        errors.append(f"experiment evidence artifact {target_error}")
+    elif os.path.getsize(target) == 0:
+        errors.append("experiment evidence artifact is empty")
+    elif not re.fullmatch(r"[0-9a-f]{64}", str(artifact["sha256"])) or _sha256(target) != artifact["sha256"]:
+        errors.append("experiment evidence artifact hash mismatch")
+    return errors, os.path.realpath(target) if not target_error else ""
 
 
 def check(lint, proj):
@@ -385,12 +440,16 @@ def check(lint, proj):
     if len(experiment_ids) != len(set(experiment_ids)):
         lint.err("L12", f"{prel}: duplicate experiment ID")
     experiments = {row["Experiment"]: row for row in experiment_rows}
+    experiment_artifacts = []
     for row in experiment_rows:
         if row["Status"] not in {"NOT_RUN", "RUNNING", "MEASURED", "HOLD"}:
             lint.err("L12", f"{prel}: invalid experiment status - {row['Experiment']} {row['Status']}")
         if row["Decision"] not in {"PENDING", "ITERATE", "EXPAND", "PIVOT", "STOP"}:
             lint.err("L12", f"{prel}: invalid experiment decision - {row['Experiment']} {row['Decision']}")
         if row["Status"] == "MEASURED":
+            for field in ("Hypothesis", "Change", "Metric"):
+                if not lint.substantive_cell(row[field]):
+                    lint.err("L12", f"{prel}: measured experiment missing {field} - {row['Experiment']}")
             if row["Decision"] == "PENDING":
                 lint.err("L12", f"{prel}: measured experiment requires a decision - {row['Experiment']}")
             target = lint.local_link_target(proj, row["Evidence"])
@@ -399,13 +458,27 @@ def check(lint, proj):
                     or os.path.commonpath([experiment_root, os.path.realpath(target)]) != experiment_root
                     or os.path.getsize(target) == 0):
                 lint.err("L12", f"{prel}: measured experiment missing primary evidence - {row['Experiment']}")
+            else:
+                evidence_errors, artifact_target = verify_experiment_evidence(target, proj, row["Experiment"], row["Metric"])
+                for error in evidence_errors:
+                    lint.err("L12", f"{prel}: {error} - {row['Experiment']}")
+                if artifact_target and not evidence_errors:
+                    experiment_artifacts.append(artifact_target)
+    if len(experiment_artifacts) != len(set(experiment_artifacts)):
+        lint.err("L12", f"{prel}: measured experiments must not reuse primary artifacts")
 
     rows = lint.table_rows(progress, "Increment ledger", INCREMENT_COLUMNS, "L12", prel)
+    increment_ids = [row["Increment"] for row in rows]
+    if len(increment_ids) != len(set(increment_ids)):
+        lint.err("L12", f"{prel}: duplicate increment ID")
     if not rows or rows[0]["Increment"] != "MVP-1":
         lint.err("L12", f"{prel}: first increment must be MVP-1")
     elif rows[0]["Experiment"] != "LAUNCH":
         lint.err("L12", f"{prel}: MVP-1 experiment must be LAUNCH")
     allowed = {"PENDING", "RED", "GREEN", "PASS", "HOLD", "FAIL"}
+    consumed_experiments = []
+    post_mvp_artifacts = []
+    post_mvp_pass_rows = []
     for row in rows:
         if row["Status"] not in allowed:
             lint.err("L12", f"{prel}: invalid increment status - {row['Increment']} {row['Status']}")
@@ -427,14 +500,23 @@ def check(lint, proj):
                     for error in verify_mvp_evidence(target, proj, row["Increment"]):
                         lint.err("L12", f"{prel}: {error} - {row['Increment']}")
                 else:
+                    post_mvp_pass_rows.append(row)
                     increment_root = os.path.realpath(os.path.join(proj, "05_engineering", "evidence", "increments"))
                     if (os.path.commonpath([increment_root, os.path.realpath(target)]) != increment_root
                             or os.path.getsize(target) == 0):
                         lint.err("L12", f"{prel}: post-MVP increment requires its own primary artifact - {row['Increment']}")
+                    else:
+                        post_mvp_artifacts.append(os.path.realpath(target))
                     experiment = experiments.get(row["Experiment"])
                     if (not experiment or experiment["Status"] != "MEASURED"
                             or experiment["Decision"] not in {"ITERATE", "EXPAND"}):
                         lint.err("L12", f"{prel}: PASS increment requires measured experiment signal - {row['Increment']}")
+                    else:
+                        consumed_experiments.append(row["Experiment"])
+    if len(post_mvp_artifacts) != len(set(post_mvp_artifacts)):
+        lint.err("L12", f"{prel}: post-MVP PASS increments must use distinct primary artifacts")
+    if len(consumed_experiments) != len(set(consumed_experiments)):
+        lint.err("L12", f"{prel}: each measured experiment can authorize only one PASS increment")
 
     phase_rows = lint.table_rows(progress, "Phase progress", ["Phase", "Status", "Date", "Deliverable"], "L12", prel)
     phase_status = {row["Phase"]: row["Status"].lower() for row in phase_rows}
@@ -463,12 +545,15 @@ def check(lint, proj):
             lint.err("L12", f"{prel}: release PASS requires increment PASS - {row['Increment']}")
         if any(row[field] != "PASS" for field in ("Instrumentation", "Feedback", "Rollback")):
             lint.err("L12", f"{prel}: release PASS requires instrumentation/feedback/rollback PASS")
-        if not re.match(r"^https://", row["Live artifact"]):
+        if not valid_https_url(row["Live artifact"]):
             lint.err("L12", f"{prel}: release PASS requires https live artifact")
-        if not lint.substantive_cell(row["Approver"]):
-            lint.err("L12", f"{prel}: release PASS missing approver")
+        g1_approver = gates.get("G1", {}).get("Approver", "")
+        if not lint.substantive_cell(row["Approver"]) or row["Approver"] != g1_approver:
+            lint.err("L12", f"{prel}: release PASS approver must match G1 approver")
         if not valid_utc_timestamp(row["Released at"]):
             lint.err("L12", f"{prel}: release PASS Released at must be UTC ISO-8601")
+        elif utc_datetime(row["Released at"]) > datetime.now(timezone.utc):
+            lint.err("L12", f"{prel}: release PASS Released at cannot be in the future")
         expected_risk = "low-reversible" if delivery_mode == "startup-reversible" else "high-risk"
         if row["Risk"] != expected_risk:
             lint.err("L12", f"{prel}: release risk does not match delivery mode")
@@ -482,6 +567,12 @@ def check(lint, proj):
         else:
             for error in verify_release_evidence(target, proj, row["Release"], row["Increment"], row["Live artifact"], row["Released at"]):
                 lint.err("L12", f"{prel}: {error} - {row['Release']}")
+
+    mvp_released = any(row["Verdict"] == "PASS" and row["Increment"] == "MVP-1" for row in release_rows)
+    mvp_pass = increments.get("MVP-1", {}).get("Status") == "PASS"
+    for row in post_mvp_pass_rows:
+        if not mvp_pass or not mvp_released:
+            lint.err("L12", f"{prel}: post-MVP PASS increment requires MVP-1 Release PASS - {row['Increment']}")
 
     completed = any(row["Phase"] == "P5+P6 increments" and row["Status"].lower() == "done" for row in phase_rows)
     finals = lint.section_text(report, "Final verdicts")
