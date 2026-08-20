@@ -84,11 +84,16 @@ def valid_https_url(value):
         return False
     if host.lower() == "localhost" or host.lower().endswith(".local"):
         return False
+    ip_shaped = bool(re.fullmatch(r"[0-9.]+", host)) or ":" in host
     try:
-        ipaddress.ip_address(host)
-        return True
+        address = ipaddress.ip_address(host)
     except ValueError:
-        pass
+        if ip_shaped:
+            return False
+    else:
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        return address.is_global
     try:
         ascii_host = host.encode("idna").decode("ascii")
     except UnicodeError:

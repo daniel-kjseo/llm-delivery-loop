@@ -477,10 +477,37 @@ class V040Tests(unittest.TestCase):
             "https://example.com/has space",
             "https://localhost/path",
             "https://singlelabel/path",
+            "https://999.999.999.999/path",
+            "https://127.0.0.01/path",
+            "https://127.0.0.1/path",
+            "https://10.0.0.1/path",
+            "https://169.254.1.1/path",
+            "https://0.0.0.0/path",
+            "https://[::1]/path",
+            "https://[::ffff:127.0.0.1]/path",
         )
         for value in invalid:
             self.assertFalse(lean.valid_https_url(value), value)
         self.assertTrue(lean.valid_https_url("https://product.pages.dev/mvp"))
+        self.assertTrue(lean.valid_https_url("https://8.8.8.8/mvp"))
+        self.assertTrue(lean.valid_https_url("https://[2606:4700:4700::1111]/mvp"))
+
+    def test_release_integration_rejects_malformed_and_nonpublic_ip_hosts(self):
+        self.pass_g1()
+        self.prepare_launch_docs()
+        self.pass_mvp1()
+        manifest_path = os.path.join(self.proj, "05_engineering", "evidence", "release.json")
+        manifest = json.load(open(manifest_path, encoding="utf-8"))
+        manifest["live_url"] = "https://999.999.999.999/mvp"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |", "| RELEASE-1 | PASS | MVP-1 | low-reversible | PASS | PASS | PASS | https://999.999.999.999/mvp | Daniel | 2026-01-02T00:00:00Z | [release](05_engineering/evidence/release.json) |")
+        self.assert_error("requires https live artifact")
+        self.replace("PROGRESS.md", "https://999.999.999.999/mvp", "https://127.0.0.1/mvp")
+        manifest["live_url"] = "https://127.0.0.1/mvp"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.assert_error("requires https live artifact")
 
     def test_completion_requires_cost_ledger_data(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
