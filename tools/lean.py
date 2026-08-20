@@ -9,6 +9,7 @@ bounded and every local artifact hash matches; exit 1 prints exact violations.
 import argparse
 import csv
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -69,10 +70,34 @@ def utc_datetime(value):
 
 
 def valid_https_url(value):
-    if not isinstance(value, str):
+    if not isinstance(value, str) or not value or re.search(r"[\s\\\x00-\x1f\x7f]", value):
         return False
-    parsed = urlsplit(value)
-    return parsed.scheme == "https" and bool(parsed.hostname) and parsed.username is None and parsed.password is None
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
+    except (ValueError, UnicodeError):
+        return False
+    if parsed.scheme != "https" or not host or parsed.username is not None or parsed.password is not None:
+        return False
+    if port is not None and not 1 <= port <= 65535:
+        return False
+    if host.lower() == "localhost" or host.lower().endswith(".local"):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    labels = ascii_host.split(".")
+    return (len(ascii_host) <= 253 and len(labels) >= 2
+            and all(1 <= len(label) <= 63
+                    and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+                    for label in labels))
 
 
 def verify_packet(path, root=None):

@@ -469,6 +469,19 @@ class V040Tests(unittest.TestCase):
         self.assert_error("Released at cannot be in the future")
         self.assert_error("artifact hashes must be distinct")
 
+    def test_live_url_parser_rejects_invalid_public_urls(self):
+        invalid = (
+            "https://.",
+            "https://exa mple.com/path",
+            "https://example.com:bad/path",
+            "https://example.com/has space",
+            "https://localhost/path",
+            "https://singlelabel/path",
+        )
+        for value in invalid:
+            self.assertFalse(lean.valid_https_url(value), value)
+        self.assertTrue(lean.valid_https_url("https://product.pages.dev/mvp"))
+
     def test_completion_requires_cost_ledger_data(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
         self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
