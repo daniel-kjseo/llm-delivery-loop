@@ -485,6 +485,10 @@ class V040Tests(unittest.TestCase):
             "https://0.0.0.0/path",
             "https://[::1]/path",
             "https://[::ffff:127.0.0.1]/path",
+            "https://224.0.0.1/path",
+            "https://239.255.255.255/path",
+            "https://[ff02::1]/path",
+            "https://[fec0::1]/path",
         )
         for value in invalid:
             self.assertFalse(lean.valid_https_url(value), value)
@@ -505,6 +509,11 @@ class V040Tests(unittest.TestCase):
         self.assert_error("requires https live artifact")
         self.replace("PROGRESS.md", "https://999.999.999.999/mvp", "https://127.0.0.1/mvp")
         manifest["live_url"] = "https://127.0.0.1/mvp"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.assert_error("requires https live artifact")
+        self.replace("PROGRESS.md", "https://127.0.0.1/mvp", "https://224.0.0.1/mvp")
+        manifest["live_url"] = "https://224.0.0.1/mvp"
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle)
         self.assert_error("requires https live artifact")

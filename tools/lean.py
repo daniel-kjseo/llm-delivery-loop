@@ -93,7 +93,17 @@ def valid_https_url(value):
     else:
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
             address = address.ipv4_mapped
-        return address.is_global
+        excluded = (
+            address.is_multicast,
+            address.is_private,
+            address.is_loopback,
+            address.is_link_local,
+            address.is_unspecified,
+            address.is_reserved,
+        )
+        if isinstance(address, ipaddress.IPv6Address):
+            excluded += (address.is_site_local,)
+        return address.is_global and not any(excluded)
     try:
         ascii_host = host.encode("idna").decode("ascii")
     except UnicodeError:
