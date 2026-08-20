@@ -123,9 +123,9 @@ class V040Tests(unittest.TestCase):
             "raw/interview.md": "IV-01 .. IV-05",
             "logs/log.md": "# events\n",
             "logs/cost-ledger.csv": "timestamp,phase,role,model,input_tokens,output_tokens,cache_tokens,llm_calls,checker_runs,wall_seconds,evidence\n",
-            "05_engineering/evidence/tests.txt": "17 tests PASS\n",
-            "05_engineering/evidence/render.txt": "2 browser cases; console errors 0\n",
-            "05_engineering/evidence/independent.txt": "fresh verifier PASS; target mutation 0\n",
+            "05_engineering/evidence/deterministic/tests.txt": "17 tests PASS\n",
+            "05_engineering/evidence/rendered/render.txt": "2 browser cases; console errors 0\n",
+            "05_engineering/evidence/independent/report.txt": "fresh verifier PASS; target mutation 0\n",
         }
         for rel, text in files.items():
             path = os.path.join(self.proj, rel)
@@ -140,11 +140,11 @@ class V040Tests(unittest.TestCase):
             "increment": "MVP-1",
             "user_journey": "user submits one input and receives one verified result",
             "deterministic": {"status": "PASS", "command": "python tests.py", "checks": 17,
-                              "artifact": artifact("05_engineering/evidence/tests.txt")},
+                              "artifact": artifact("05_engineering/evidence/deterministic/tests.txt")},
             "rendered": {"status": "PASS", "instrument": "browser", "cases": 2, "console_errors": 0,
-                         "artifact": artifact("05_engineering/evidence/render.txt")},
+                         "artifact": artifact("05_engineering/evidence/rendered/render.txt")},
             "independent": {"status": "PASS", "verifier": "fresh-context", "target_mutation": 0,
-                            "artifact": artifact("05_engineering/evidence/independent.txt")},
+                            "artifact": artifact("05_engineering/evidence/independent/report.txt")},
         }
         with open(os.path.join(self.proj, "05_engineering", "evidence", "mvp1.json"), "w", encoding="utf-8") as handle:
             json.dump(manifest, handle)
@@ -251,13 +251,13 @@ class V040Tests(unittest.TestCase):
         packet = {
             "schema": "ldl-phase-packet-v1", "phase": "P5", "task": "x", "summary": "ok",
             "requirements": ["FULL VERBATIM REPORT: hidden prose"],
-            "commands": [], "blockers": ["x" * 501], "artifacts": [],
+            "commands": [], "blockers": ["FULL VERBATIM REPORT " + "x" * 380] * 12, "artifacts": [],
         }
         path = os.path.join(self.proj, "logs", "verbatim-list.json")
         open(path, "w").write(json.dumps(packet))
         errors = lean.verify_packet(path, self.proj)
         self.assertTrue(any("requirement must be an ID" in value for value in errors), errors)
-        self.assertTrue(any("blockers item exceeds" in value for value in errors), errors)
+        self.assertTrue(any("blockers aggregate exceeds" in value for value in errors), errors)
 
     def test_product_pass_requires_working_mvp_increment(self):
         self.replace("06_VERIFICATION.md", "| R-01 | NOT_RUN | pending |", "| R-01 | PASS | [proof](03_EVIDENCE.md) |")
@@ -278,6 +278,20 @@ class V040Tests(unittest.TestCase):
         open(empty, "w").write("")
         self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/empty.json) |")
         self.assert_error("MVP evidence is empty")
+
+    def test_mvp_manifest_rejects_maker_self_attestation_and_reused_artifact(self):
+        manifest_path = os.path.join(self.proj, "05_engineering", "evidence", "mvp1.json")
+        manifest = json.load(open(manifest_path, encoding="utf-8"))
+        shared = manifest["deterministic"]["artifact"]
+        manifest["rendered"]["artifact"] = shared
+        manifest["independent"]["artifact"] = shared
+        manifest["independent"]["verifier"] = "maker"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
+        self.assert_error("independent verifier must be separated from maker")
+        self.assert_error("artifact path escapes boundary")
 
     def test_completion_requires_cost_ledger_data(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
@@ -307,6 +321,15 @@ class V040Tests(unittest.TestCase):
         with open(ledger, "a", encoding="utf-8") as handle:
             handle.write("2026-1-1T0:0:0Z,P5,maker,model,1,1,0,1,1,10,missing.txt\n")
         self.assert_error("timestamp must be UTC ISO-8601")
+
+    def test_cost_row_cannot_cite_ledger_itself(self):
+        self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
+        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
+        ledger = os.path.join(self.proj, "logs", "cost-ledger.csv")
+        with open(ledger, "a", encoding="utf-8") as handle:
+            handle.write("2026-01-01T00:00:00Z,P5,maker,model,1,1,0,1,1,10,logs/cost-ledger.csv\n")
+        self.assert_error("cannot cite the ledger itself")
 
     def test_raw_is_recursive_and_skip_names_do_not_escape(self):
         nested = os.path.join(self.proj, "raw", "tools", "deep", "source.txt")

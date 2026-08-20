@@ -90,6 +90,12 @@ def verify_packet(path, root=None):
             for value in packet[field]:
                 if isinstance(value, str) and len(value) > PACKET_ITEM_MAX_CHARS:
                     errors.append(f"packet {field} item exceeds {PACKET_ITEM_MAX_CHARS} chars")
+    aggregate_limits = {"commands": 2000, "blockers": RELAY_SUMMARY_MAX_CHARS}
+    for field, limit in aggregate_limits.items():
+        if isinstance(packet.get(field), list):
+            total = sum(len(value) for value in packet[field] if isinstance(value, str))
+            if total > limit:
+                errors.append(f"packet {field} aggregate exceeds {limit} chars")
     artifacts = packet.get("artifacts")
     if not isinstance(artifacts, list):
         artifacts = []
@@ -171,6 +177,9 @@ def valid_cost_rows(path, project_root):
                 _, evidence_error = _project_file(project_root, row["evidence"])
                 if evidence_error:
                     return [], f"cost ledger row {number} evidence {evidence_error}"
+                evidence_path = os.path.realpath(os.path.join(project_root, row["evidence"]))
+                if evidence_path == os.path.realpath(path):
+                    return [], f"cost ledger row {number} cannot cite the ledger itself"
                 rows.append(row)
             return rows, ""
     except OSError as exc:
@@ -198,6 +207,7 @@ def verify_mvp_evidence(path, project_root, increment):
         "independent": ("verifier", "target_mutation"),
     }
     engineering = os.path.join(project_root, "05_engineering")
+    artifact_targets = []
     for name, fields in sections.items():
         section = evidence.get(name)
         if not isinstance(section, dict) or section.get("status") != "PASS":
@@ -215,15 +225,24 @@ def verify_mvp_evidence(path, project_root, increment):
         for field in ("command", "instrument", "verifier"):
             if field in fields and (not isinstance(section.get(field), str) or not section[field].strip()):
                 errors.append(f"MVP evidence {name} invalid {field}")
+        if name == "independent" and not re.match(r"^(fresh-context|different-model|domain-expert|human)\b", str(section.get("verifier", "")), re.I):
+            errors.append("MVP evidence independent verifier must be separated from maker")
         artifact = section.get("artifact")
         if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
             errors.append(f"MVP evidence {name} artifact must be path+sha256")
             continue
-        target, target_error = _project_file(project_root, artifact["path"], engineering)
+        section_root = os.path.join(engineering, "evidence", name)
+        target, target_error = _project_file(project_root, artifact["path"], section_root)
         if target_error:
             errors.append(f"MVP evidence {name} artifact {target_error}")
+        elif os.path.getsize(target) == 0:
+            errors.append(f"MVP evidence {name} artifact is empty")
         elif not re.fullmatch(r"[0-9a-f]{64}", str(artifact["sha256"])) or _sha256(target) != artifact["sha256"]:
             errors.append(f"MVP evidence {name} artifact hash mismatch")
+        else:
+            artifact_targets.append(target)
+    if len(artifact_targets) != len(set(artifact_targets)):
+        errors.append("MVP evidence deterministic/rendered/independent artifacts must be distinct")
     return errors
 
 

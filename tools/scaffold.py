@@ -26,7 +26,7 @@ WS_FILES = {
     "templates/verifier-brief.md": "# Read-only verifier brief\n\n- Read the contract and primary evidence before the maker verdict.\n- Target access: read-only. Run mutating tools only on a clone or scratch workspace.\n- Record target tree diff before/after; target mutation must be 0 files.\n- Report Harness / Product / Execution readiness / Method conformance separately.\n",
     "templates/quantitative-model.md": "# Quantitative model\n\n- Baseline window:\n- Baseline unit:\n- Candidate window:\n- Candidate unit:\n- Assumptions:\n- Formula/reproducer:\n- Reconciliation:\n\nUse scenarios for conditional outcomes. A confirmation or request is not a successful outcome.\n",
     "templates/phase-packet.json": "{\n  \"schema\": \"ldl-phase-packet-v1\",\n  \"phase\": \"P5\",\n  \"task\": \"one bounded increment\",\n  \"summary\": \"path+hash handles only; no verbatim reports\",\n  \"requirements\": [],\n  \"commands\": [],\n  \"blockers\": [],\n  \"artifacts\": []\n}\n",
-    "templates/mvp-evidence.json": "{\n  \"schema\": \"ldl-mvp-evidence-v1\",\n  \"increment\": \"MVP-1\",\n  \"user_journey\": \"one real end-to-end user journey\",\n  \"deterministic\": {\"status\": \"NOT_RUN\", \"command\": \"\", \"checks\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/tests.txt\", \"sha256\": \"\"}},\n  \"rendered\": {\"status\": \"NOT_RUN\", \"instrument\": \"\", \"cases\": 0, \"console_errors\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/render.txt\", \"sha256\": \"\"}},\n  \"independent\": {\"status\": \"NOT_RUN\", \"verifier\": \"\", \"target_mutation\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/independent.txt\", \"sha256\": \"\"}}\n}\n",
+    "templates/mvp-evidence.json": "{\n  \"schema\": \"ldl-mvp-evidence-v1\",\n  \"increment\": \"MVP-1\",\n  \"user_journey\": \"one real end-to-end user journey\",\n  \"deterministic\": {\"status\": \"NOT_RUN\", \"command\": \"\", \"checks\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/deterministic/tests.txt\", \"sha256\": \"\"}},\n  \"rendered\": {\"status\": \"NOT_RUN\", \"instrument\": \"\", \"cases\": 0, \"console_errors\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/rendered/render.txt\", \"sha256\": \"\"}},\n  \"independent\": {\"status\": \"NOT_RUN\", \"verifier\": \"\", \"target_mutation\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/independent/report.txt\", \"sha256\": \"\"}}\n}\n",
     "owner/inbox.md": "# Owner inbox\n\n> Maker writes requests here. Owner does not edit project trees.\n",
     "owner/outbox.md": "# Owner outbox\n\n> Owner writes decisions here. Maker preserves accepted decisions once under project raw/.\n",
 }
@@ -186,7 +186,7 @@ def new_project(root, name, date=None):
         sys.exit(f"refusing to write outside projects/: {proj}")
     if os.path.exists(proj):
         sys.exit(f"already exists: {proj}")
-    for directory in ["05_engineering/evidence", "raw", "logs/sessions"]:
+    for directory in ["05_engineering/evidence/deterministic", "05_engineering/evidence/rendered", "05_engineering/evidence/independent", "raw", "logs/sessions"]:
         os.makedirs(os.path.join(proj, directory), exist_ok=True)
     for rel, content in PROJ_FILES.items():
         write(os.path.join(proj, rel), content.format(name=name))
