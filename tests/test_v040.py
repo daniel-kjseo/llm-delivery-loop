@@ -29,8 +29,20 @@ CONTRACT = """# 00_CONTRACT — lean
 - Risk level: low
 
 ## Delivery profile
-- Delivery mode: working-mvp
+- Delivery mode: startup-reversible
 - First executable increment: MVP-1
+- Release strategy: ship-first
+
+## Launch brief
+- Target user: one early adopter
+- Problem: one painful repeated task
+- Smallest value journey: submit one input and receive one useful result
+- Launch metric: one completed journey
+- Feedback channel: in-product feedback link
+- Kill criteria: zero completed journeys in the timebox
+- Timebox: one week
+- Risk: low-reversible
+- Rollback: restore the previous static artifact
 
 ## 2W1H
 - Why: solve a real user problem [IV-01]
@@ -98,9 +110,19 @@ PROGRESS = """# PROGRESS — lean
 | G4 | PENDING | v1 | human | | | |
 
 ## Increment ledger
-| Increment | User journey | Status | Deterministic tests | Rendered/browser | Independent check | Evidence |
+| Increment | Experiment | User journey | Status | Deterministic tests | Rendered/browser | Independent check | Evidence |
+|---|---|---|---|---|---|---|---|
+| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |
+
+## Release ledger
+| Release | Verdict | Increment | Risk | Instrumentation | Feedback | Rollback | Live artifact | Approver | Released at | Evidence |
+|---|---|---|---|---|---|---|---|---|---|---|
+| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |
+
+## Experiment ledger
+| Experiment | Hypothesis | Change | Metric | Status | Evidence | Decision |
 |---|---|---|---|---|---|---|
-| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |
+| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |
 
 Events: [events](logs/log.md)
 """
@@ -126,6 +148,12 @@ class V040Tests(unittest.TestCase):
             "05_engineering/evidence/deterministic/tests.txt": "17 tests PASS\n",
             "05_engineering/evidence/rendered/render.txt": "2 browser cases; console errors 0\n",
             "05_engineering/evidence/independent/report.txt": "fresh verifier PASS; target mutation 0\n",
+            "05_engineering/evidence/release/smoke.txt": "live smoke PASS; console errors 0\n",
+            "05_engineering/evidence/release/telemetry.txt": "completion event observed\n",
+            "05_engineering/evidence/release/rollback.txt": "rollback command verified\n",
+            "05_engineering/evidence/release/feedback.txt": "feedback channel reachable\n",
+            "05_engineering/evidence/experiments/exp1.txt": "5 users; 4 completed\n",
+            "05_engineering/evidence/increments/f1.txt": "export journey tests and browser trace PASS\n",
         }
         for rel, text in files.items():
             path = os.path.join(self.proj, rel)
@@ -148,6 +176,16 @@ class V040Tests(unittest.TestCase):
         }
         with open(os.path.join(self.proj, "05_engineering", "evidence", "mvp1.json"), "w", encoding="utf-8") as handle:
             json.dump(manifest, handle)
+        release_manifest = {
+            "schema": "ldl-release-evidence-v1", "release": "RELEASE-1", "increment": "MVP-1",
+            "live_url": "https://example.test/mvp", "released_at": "2026-01-02T00:00:00Z",
+            "smoke": {"status": "PASS", "cases": 2, "console_errors": 0, "artifact": artifact("05_engineering/evidence/release/smoke.txt")},
+            "telemetry": {"status": "PASS", "event": "journey_completed", "artifact": artifact("05_engineering/evidence/release/telemetry.txt")},
+            "rollback": {"status": "READY", "command": "restore previous", "artifact": artifact("05_engineering/evidence/release/rollback.txt")},
+            "feedback": {"status": "READY", "channel": "https://example.test/feedback", "artifact": artifact("05_engineering/evidence/release/feedback.txt")},
+        }
+        with open(os.path.join(self.proj, "05_engineering", "evidence", "release.json"), "w", encoding="utf-8") as handle:
+            json.dump(release_manifest, handle)
         for rel, text in {
             "CLAUDE.md": "# Workspace constitution\n\ncontract first; preserve evidence\n",
             "projects/CLAUDE.md": "# Shared protocol\n\nread contract; preserve gate order\n",
@@ -168,6 +206,21 @@ class V040Tests(unittest.TestCase):
         text = open(path, encoding="utf-8").read()
         open(path, "w", encoding="utf-8").write(text.replace(old, new))
 
+    def pass_mvp1(self):
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
+
+    def pass_g1(self):
+        self.replace("PROGRESS.md", "| G1 | PENDING | v1 | human | | | |", "| G1 | PASS | v1 | human | Daniel | 2026-01-01T00:00:00Z | [approval](raw/approval-g1.md) |")
+        with open(os.path.join(self.proj, "raw", "approval-g1.md"), "w", encoding="utf-8") as handle:
+            handle.write("Daniel approves Gate 1 for contract v1.")
+        with open(os.path.join(self.proj, "logs", "log.md"), "a", encoding="utf-8") as handle:
+            handle.write("GATE-PASS: G1 contract=v1\n")
+
+    def prepare_launch_docs(self):
+        for phase in ("P1 requirements", "P2 structure", "P4 scoping"):
+            self.replace("PROGRESS.md", f"| {phase} | pending | |", f"| {phase} | done | 2026-01-01 |")
+
     def assert_error(self, fragment):
         errors = self.errors()
         self.assertTrue(any(fragment in value for value in errors), errors)
@@ -181,9 +234,56 @@ class V040Tests(unittest.TestCase):
     def test_clean_v040_workspace_passes(self):
         self.assertEqual([], self.errors())
 
+    def test_startup_release_can_pass_with_g2_to_g4_pending(self):
+        self.pass_g1()
+        self.prepare_launch_docs()
+        self.pass_mvp1()
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |", "| RELEASE-1 | PASS | MVP-1 | low-reversible | PASS | PASS | PASS | https://example.test/mvp | Daniel | 2026-01-02T00:00:00Z | [release](05_engineering/evidence/release.json) |")
+        self.assertEqual([], self.errors())
+
+    def test_release_pass_requires_launch_controls(self):
+        self.pass_g1()
+        self.prepare_launch_docs()
+        self.pass_mvp1()
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING |", "| RELEASE-1 | PASS |")
+        self.assert_error("release PASS requires instrumentation/feedback/rollback PASS")
+
+    def test_release_pass_requires_launch_documents(self):
+        self.pass_g1()
+        self.pass_mvp1()
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |", "| RELEASE-1 | PASS | MVP-1 | low-reversible | PASS | PASS | PASS | https://example.test/mvp | Daniel | 2026-01-02T00:00:00Z | [release](05_engineering/evidence/release.json) |")
+        self.assert_error("release PASS requires launch documents done")
+
+    def test_high_risk_release_requires_g4(self):
+        self.replace("00_CONTRACT.md", "- Delivery mode: startup-reversible", "- Delivery mode: gated-high-risk")
+        self.replace("00_CONTRACT.md", "- Risk: low-reversible", "- Risk: high-risk")
+        self.pass_g1()
+        self.prepare_launch_docs()
+        self.pass_mvp1()
+        self.replace("PROGRESS.md", "| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |", "| RELEASE-1 | PASS | MVP-1 | high-risk | PASS | PASS | PASS | https://example.test/mvp | Daniel | 2026-01-02T00:00:00Z | [release](05_engineering/evidence/release.json) |")
+        self.assert_error("high-risk release requires G4 PASS")
+
+    def test_post_launch_increment_requires_measured_experiment(self):
+        path = os.path.join(self.proj, "PROGRESS.md")
+        text = open(path, encoding="utf-8").read()
+        anchor = "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |"
+        extra = anchor + "\n| F-1 | EXP-1 | add requested export | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/increments/f1.txt) |"
+        open(path, "w", encoding="utf-8").write(text.replace(anchor, extra))
+        self.assert_error("PASS increment requires measured experiment signal")
+
+    def test_measured_experiment_allows_feedback_driven_increment(self):
+        path = os.path.join(self.proj, "PROGRESS.md")
+        text = open(path, encoding="utf-8").read()
+        anchor = "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |"
+        extra = anchor + "\n| F-1 | EXP-1 | add requested export | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/increments/f1.txt) |"
+        text = text.replace(anchor, extra)
+        text = text.replace("| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |", "| EXP-1 | real users request export | add export | request rate | MEASURED | [signal](05_engineering/evidence/experiments/exp1.txt) | EXPAND |")
+        open(path, "w", encoding="utf-8").write(text)
+        self.assertEqual([], self.errors())
+
     def test_complete_working_mvp_passes(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
         self.replace("06_VERIFICATION.md", "| R-01 | NOT_RUN | pending |", "| R-01 | PASS | [proof](03_EVIDENCE.md) |")
         self.replace("06_VERIFICATION.md", "- Harness: NOT_RUN", "- Harness: PASS")
@@ -266,17 +366,17 @@ class V040Tests(unittest.TestCase):
         self.assert_error("Product PASS requires MVP-1 increment PASS")
 
     def test_increment_pass_requires_render_and_independent_check(self):
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | NOT_RUN | NOT_RUN |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | NOT_RUN | NOT_RUN |")
         self.assert_error("PASS increment requires tests/render/independent PASS")
 
     def test_increment_pass_rejects_report_self_attestation(self):
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         self.assert_error("evidence must be under 05_engineering")
 
     def test_increment_pass_rejects_empty_arbitrary_engineering_file(self):
         empty = os.path.join(self.proj, "05_engineering", "evidence", "empty.json")
         open(empty, "w").write("")
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/empty.json) |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | [verification](06_VERIFICATION.md) |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/empty.json) |")
         self.assert_error("MVP evidence is empty")
 
     def test_mvp_manifest_rejects_maker_self_attestation_and_reused_artifact(self):
@@ -288,19 +388,19 @@ class V040Tests(unittest.TestCase):
         manifest["independent"]["verifier"] = "maker"
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle)
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
         self.assert_error("independent verifier must be separated from maker")
         self.assert_error("artifact path escapes boundary")
 
     def test_completion_requires_cost_ledger_data(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         self.assert_error("completed delivery requires cost ledger data")
 
     def test_garbage_cost_row_does_not_satisfy_telemetry(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         ledger = os.path.join(self.proj, "logs", "cost-ledger.csv")
         with open(ledger, "a", encoding="utf-8") as handle:
             handle.write("now,P5,maker,model,NaN,0,0,1,1,10,logs/log.md\n")
@@ -315,7 +415,7 @@ class V040Tests(unittest.TestCase):
 
     def test_cost_row_requires_valid_timestamp_and_existing_evidence(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
         ledger = os.path.join(self.proj, "logs", "cost-ledger.csv")
         with open(ledger, "a", encoding="utf-8") as handle:
@@ -324,7 +424,7 @@ class V040Tests(unittest.TestCase):
 
     def test_cost_row_cannot_cite_ledger_itself(self):
         self.replace("PROGRESS.md", "| P5+P6 increments | pending | |", "| P5+P6 increments | done | 2026-01-01 |")
-        self.replace("PROGRESS.md", "| MVP-1 | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
+        self.replace("PROGRESS.md", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PENDING | NOT_RUN | NOT_RUN | NOT_RUN |", "| MVP-1 | LAUNCH | user submits one input and receives one verified result | PASS | PASS | PASS | PASS |")
         self.replace("PROGRESS.md", "| PASS | PASS | PASS | PASS | [verification](06_VERIFICATION.md) |", "| PASS | PASS | PASS | PASS | [proof](05_engineering/evidence/mvp1.json) |")
         ledger = os.path.join(self.proj, "logs", "cost-ledger.csv")
         with open(ledger, "a", encoding="utf-8") as handle:

@@ -20,13 +20,14 @@ WS_FILES = {
     ".ldl-version": "0.4.0\n",
     "CLAUDE.md": "# Workspace constitution\n\n> Engraved at install step 3: identity in one sentence / principles / how we work / permissions and limits / scope constraints / center. Written in the user's own words — not copied from the LDL document.\n",
     "RULES.md": "# RULES — prevention rules (the ratchet)\n\n> One rule per lesson, each with its origin. Every task reads this before starting.\n",
-    "index.md": "# index — link-closed catalog\n\n> Edit, never append. Every managed document is reachable from here.\n\n## Protocol\n- [Workspace constitution](CLAUDE.md)\n- [RULES.md](RULES.md)\n- [Shared project protocol](projects/CLAUDE.md)\n- [Verifier brief](templates/verifier-brief.md)\n- [Quantitative model](templates/quantitative-model.md)\n- [Lean phase packet](templates/phase-packet.json)\n- [MVP evidence manifest](templates/mvp-evidence.json)\n- [Owner inbox](owner/inbox.md)\n- [Owner outbox](owner/outbox.md)\n- [Outer-loop log](logs/log.md)\n\n## Projects\n\n## Wiki\n\n## Held problems\n",
+    "index.md": "# index — link-closed catalog\n\n> Edit, never append. Every managed document is reachable from here.\n\n## Protocol\n- [Workspace constitution](CLAUDE.md)\n- [RULES.md](RULES.md)\n- [Shared project protocol](projects/CLAUDE.md)\n- [Verifier brief](templates/verifier-brief.md)\n- [Quantitative model](templates/quantitative-model.md)\n- [Lean phase packet](templates/phase-packet.json)\n- [MVP evidence manifest](templates/mvp-evidence.json)\n- [Release evidence manifest](templates/release-evidence.json)\n- [Owner inbox](owner/inbox.md)\n- [Owner outbox](owner/outbox.md)\n- [Outer-loop log](logs/log.md)\n\n## Projects\n\n## Wiki\n\n## Held problems\n",
     "logs/log.md": "# Outer-loop log (append-only)\n",
     "projects/CLAUDE.md": "# Shared project protocol\n\n> Engraved at install step 3: Phase 0-6 gates, naming, document and log standards. Read the active project's contract (00_CONTRACT.md) before starting any work.\n",
     "templates/verifier-brief.md": "# Read-only verifier brief\n\n- Read the contract and primary evidence before the maker verdict.\n- Target access: read-only. Run mutating tools only on a clone or scratch workspace.\n- Record target tree diff before/after; target mutation must be 0 files.\n- Report Harness / Product / Execution readiness / Method conformance separately.\n",
     "templates/quantitative-model.md": "# Quantitative model\n\n- Baseline window:\n- Baseline unit:\n- Candidate window:\n- Candidate unit:\n- Assumptions:\n- Formula/reproducer:\n- Reconciliation:\n\nUse scenarios for conditional outcomes. A confirmation or request is not a successful outcome.\n",
     "templates/phase-packet.json": "{\n  \"schema\": \"ldl-phase-packet-v1\",\n  \"phase\": \"P5\",\n  \"task\": \"one bounded increment\",\n  \"summary\": \"path+hash handles only; no verbatim reports\",\n  \"requirements\": [],\n  \"commands\": [],\n  \"blockers\": [],\n  \"artifacts\": []\n}\n",
     "templates/mvp-evidence.json": "{\n  \"schema\": \"ldl-mvp-evidence-v1\",\n  \"increment\": \"MVP-1\",\n  \"user_journey\": \"one real end-to-end user journey\",\n  \"deterministic\": {\"status\": \"NOT_RUN\", \"command\": \"\", \"checks\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/deterministic/tests.txt\", \"sha256\": \"\"}},\n  \"rendered\": {\"status\": \"NOT_RUN\", \"instrument\": \"\", \"cases\": 0, \"console_errors\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/rendered/render.txt\", \"sha256\": \"\"}},\n  \"independent\": {\"status\": \"NOT_RUN\", \"verifier\": \"\", \"target_mutation\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/independent/report.txt\", \"sha256\": \"\"}}\n}\n",
+    "templates/release-evidence.json": "{\n  \"schema\": \"ldl-release-evidence-v1\",\n  \"release\": \"RELEASE-1\",\n  \"increment\": \"MVP-1\",\n  \"live_url\": \"https://example.com\",\n  \"released_at\": \"YYYY-MM-DDTHH:MM:SSZ\",\n  \"smoke\": {\"status\": \"NOT_RUN\", \"cases\": 0, \"console_errors\": 0, \"artifact\": {\"path\": \"05_engineering/evidence/release/smoke.txt\", \"sha256\": \"\"}},\n  \"telemetry\": {\"status\": \"NOT_RUN\", \"event\": \"\", \"artifact\": {\"path\": \"05_engineering/evidence/release/telemetry.txt\", \"sha256\": \"\"}},\n  \"rollback\": {\"status\": \"NOT_RUN\", \"command\": \"\", \"artifact\": {\"path\": \"05_engineering/evidence/release/rollback.txt\", \"sha256\": \"\"}},\n  \"feedback\": {\"status\": \"NOT_RUN\", \"channel\": \"\", \"artifact\": {\"path\": \"05_engineering/evidence/release/feedback.txt\", \"sha256\": \"\"}}\n}\n",
     "owner/inbox.md": "# Owner inbox\n\n> Maker writes requests here. Owner does not edit project trees.\n",
     "owner/outbox.md": "# Owner outbox\n\n> Owner writes decisions here. Maker preserves accepted decisions once under project raw/.\n",
 }
@@ -44,8 +45,20 @@ CONTRACT = """# 00_CONTRACT — {name} (Phase 0 · gate 1)
 - Risk level: low
 
 ## Delivery profile
-- Delivery mode: working-mvp
+- Delivery mode: startup-reversible
 - First executable increment: MVP-1
+- Release strategy: ship-first
+
+## Launch brief
+- Target user:
+- Problem:
+- Smallest value journey:
+- Launch metric:
+- Feedback channel:
+- Kill criteria:
+- Timebox:
+- Risk: low-reversible
+- Rollback:
 
 ## 2W1H
 - Why:
@@ -97,7 +110,7 @@ PROJ_FILES = {
     "04_SCOPE.md": "# 04_SCOPE — {name} (Phase 4 · gate 3)\n\n> Compare 2-3 candidates, map every requirement once, and state what was cut.\n\n## Impact dimensions\n| Dimension ID | Status | Evidence |\n|---|---|---|\n\n## Action readiness\n| Action ID | Impact dimensions | Preconditions | Approval tier | Approval evidence | Canary | Rollback | Ready |\n|---|---|---|---|---|---|---|---|\n\n## Quantitative model\n> Required only when `Quantitative claims: yes`. Keep periods and units comparable; use scenarios instead of one blended range.\n- Baseline window:\n- Baseline unit:\n- Candidate window:\n- Candidate unit:\n- Assumptions:\n- Formula/reproducer:\n- Reconciliation:\n",
     "06_VERIFICATION.md": "# 06_VERIFICATION — {name} (Phase 6 · gate 4)\n\n## Requirement verdicts\n| Requirement ID | Verdict | Evidence |\n|---|---|---|\n\n## Final verdicts\n- Harness: NOT_RUN\n- Product: NOT_RUN\n- Execution readiness: HOLD\n- Method conformance: PASS\n- Historical violations: NONE\n- Independent verifier: fresh-context (unassigned)\n- Target mutation: 0 files\n",
     "CLAUDE.md": "# Project constitution — {name} (written in Phase 2)\n\n> Scope constraint / permission boundaries / project-specific rules. Any impacted dimension on HOLD blocks every linked action.\n",
-    "PROGRESS.md": "# PROGRESS — {name} (review hub)\n\n## Phase progress\n| Phase | Status | Date | Deliverable |\n|---|---|---|---|\n| P0 contract | pending | | [00_CONTRACT.md](00_CONTRACT.md) |\n| P1 requirements | pending | | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |\n| P2 structure | pending | | [CLAUDE.md](CLAUDE.md) |\n| P3 research | pending | | [03_EVIDENCE.md](03_EVIDENCE.md) |\n| P4 scoping | pending | | [04_SCOPE.md](04_SCOPE.md) |\n| P5+P6 increments | pending | | [06_VERIFICATION.md](06_VERIFICATION.md) |\n\n## Gate ledger\n| Gate | Verdict | Contract version | Approval mode | Approver | Approved at | Evidence |\n|---|---|---|---|---|---|---|\n| G1 | PENDING | v1 | human | | | |\n| G2 | PENDING | v1 | human | | | |\n| G3 | PENDING | v1 | human | | | |\n| G4 | PENDING | v1 | human | | | |\n\n## Increment ledger\n| Increment | User journey | Status | Deterministic tests | Rendered/browser | Independent check | Evidence |\n|---|---|---|---|---|---|---|\n| MVP-1 | one real user completes the smallest end-to-end journey | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | pending |\n\nEvents: [logs/log.md](logs/log.md)\n",
+    "PROGRESS.md": "# PROGRESS — {name} (review hub)\n\n## Phase progress\n| Phase | Status | Date | Deliverable |\n|---|---|---|---|\n| P0 contract | pending | | [00_CONTRACT.md](00_CONTRACT.md) |\n| P1 requirements | pending | | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |\n| P2 structure | pending | | [CLAUDE.md](CLAUDE.md) |\n| P3 research | pending | | [03_EVIDENCE.md](03_EVIDENCE.md) |\n| P4 scoping | pending | | [04_SCOPE.md](04_SCOPE.md) |\n| P5+P6 increments | pending | | [06_VERIFICATION.md](06_VERIFICATION.md) |\n\n## Gate ledger\n| Gate | Verdict | Contract version | Approval mode | Approver | Approved at | Evidence |\n|---|---|---|---|---|---|---|\n| G1 | PENDING | v1 | human | | | |\n| G2 | PENDING | v1 | human | | | |\n| G3 | PENDING | v1 | human | | | |\n| G4 | PENDING | v1 | human | | | |\n\n## Increment ledger\n| Increment | Experiment | User journey | Status | Deterministic tests | Rendered/browser | Independent check | Evidence |\n|---|---|---|---|---|---|---|---|\n| MVP-1 | LAUNCH | one real user completes the smallest end-to-end journey | PENDING | NOT_RUN | NOT_RUN | NOT_RUN | pending |\n\n## Release ledger\n| Release | Verdict | Increment | Risk | Instrumentation | Feedback | Rollback | Live artifact | Approver | Released at | Evidence |\n|---|---|---|---|---|---|---|---|---|---|---|\n| RELEASE-1 | PENDING | MVP-1 | low-reversible | NOT_RUN | NOT_RUN | NOT_RUN | pending | | | pending |\n\n## Experiment ledger\n| Experiment | Hypothesis | Change | Metric | Status | Evidence | Decision |\n|---|---|---|---|---|---|---|\n| EXP-1 | real users complete the core journey | next smallest change | completion rate | NOT_RUN | pending | PENDING |\n\nEvents: [logs/log.md](logs/log.md)\n",
     "logs/log.md": "# Event log — {name} (append-only)\n\n> On each Gate PASS append exactly: `GATE-PASS: G1 contract=v1`. On a method violation append: `LDL-VIOLATION: <id>`.\n",
     "logs/cost-ledger.csv": "timestamp,phase,role,model,input_tokens,output_tokens,cache_tokens,llm_calls,checker_runs,wall_seconds,evidence\n",
 }
@@ -155,6 +168,7 @@ def init(root, migrate_v03=False, migrate_v04=False):
             additions = [
                 "- [Lean phase packet](templates/phase-packet.json)",
                 "- [MVP evidence manifest](templates/mvp-evidence.json)",
+                "- [Release evidence manifest](templates/release-evidence.json)",
                 "- [Owner inbox](owner/inbox.md)",
                 "- [Owner outbox](owner/outbox.md)",
             ]
@@ -186,7 +200,7 @@ def new_project(root, name, date=None):
         sys.exit(f"refusing to write outside projects/: {proj}")
     if os.path.exists(proj):
         sys.exit(f"already exists: {proj}")
-    for directory in ["05_engineering/evidence/deterministic", "05_engineering/evidence/rendered", "05_engineering/evidence/independent", "raw", "logs/sessions"]:
+    for directory in ["05_engineering/evidence/deterministic", "05_engineering/evidence/rendered", "05_engineering/evidence/independent", "05_engineering/evidence/release", "05_engineering/evidence/experiments", "05_engineering/evidence/increments", "raw", "logs/sessions"]:
         os.makedirs(os.path.join(proj, directory), exist_ok=True)
     for rel, content in PROJ_FILES.items():
         write(os.path.join(proj, rel), content.format(name=name))

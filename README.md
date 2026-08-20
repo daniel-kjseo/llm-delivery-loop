@@ -7,7 +7,7 @@
 > **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
 > Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
 
-**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Lean Working-MVP Model · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
+**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
 
 **If you are looking for** an AI agent workflow that survives real projects, a way to stop re-explaining context to your agent every session, contract-first prompting, human-in-the-loop quality gates, or a second brain that agents actually maintain — that is what LDL is for.
 
@@ -58,20 +58,22 @@ The reference lint implements only deterministic boundaries (schema, links, voca
 
 New v0.3 workspaces carry a root `.ldl-version` marker. Removing a project's Governance profile does not downgrade it into a permissive legacy project. Marker-free pre-v0.3 workspaces remain readable; `init` refuses to mark a nonempty legacy workspace unless the operator explicitly passes `--migrate-v03`.
 
-## v0.4.0 — Lean Working-MVP Model
+## v0.4.0 — Ship-First MVP Loop
 
-v0.3 prevented structurally green work from laundering bad evidence. A field run then exposed the opposite failure: the method could be correct yet consume more context, gates, and checker turns than the product. v0.4 keeps independent judgment and deletes repeated narration.
+v0.3 prevented structurally green work from laundering bad evidence. A field run then exposed a second failure: the method could spend more time proving a product than getting a reversible MVP in front of users. v0.4 optimizes **time to first live artifact, first completed user journey, and first real feedback**.
 
-1. **The first executable increment is `MVP-1`.** A core library or unit-test green is not a working MVP. `PROGRESS.md` carries an Increment ledger. An increment reaches PASS only when one substantive user journey has deterministic tests, rendered/browser evidence, an independent check, and a typed `ldl-mvp-evidence-v1` manifest under `05_engineering/` whose three artifact hashes match. Empty files and final-report self-attestation fail. Product PASS and P5/P6 completion require `MVP-1` PASS.
-2. **Context travels as handles.** A phase packet is at most 8KB and contains artifact `path + SHA-256`, relevant requirement IDs, exact commands, blockers, and a ≤1,500-character summary. Full owner/checker reports stay on disk. `tools/lean.py verify` rejects oversized packets, embedded verbatim content, path traversal, missing artifacts, and stale hashes.
-3. **Execution economy is contractual.** Every v0.4 contract sets ceilings for packet bytes, relay/checker summary characters, checker runs, correction reruns, and a token/call ledger path. Completed delivery must contain valid non-negative integer model/token/call/checker/wall-time rows with identity and evidence; a decorative or malformed row does not count as telemetry.
-4. **One batch, one rerun.** Each increment gets one consolidated checker. Failure opens one root-class correction batch and at most one rerun. Serial one-symptom checker loops stop at HOLD instead of growing without bound.
-5. **Delta gates, deterministic first.** Tests, hashes, diffs, packet validation, generated sweeps, and browser traces run before an LLM. A budget-only amendment rechecks the contract delta and feasibility; unchanged evidence hashes carry prior proof. Whole-gate replay is reserved for changed product/evidence/scope identity.
-6. **Owner/maker writes are physically separated.** The workspace has `owner/inbox.md` and `owner/outbox.md`. Owner writes there; maker preserves an accepted decision exactly once under project `raw/`. Reviews point to the canonical artifact instead of copying it.
-7. **Raw evidence is recursive.** Files below nested raw directories — including names such as `tools`, `.git`, `node_modules`, and `__pycache__` — remain immutable. Raw/project directory symlinks are rejected. Contract archives are immutable byte snapshots: L5 still hashes them, while L1 treats only `raw/contract-archive/` as link-opaque.
-8. **Verdicts stay separate.** Harness green, core-prototype green, working-MVP PASS, readiness, method conformance, and final delivery are different claims. `NOT_RUN` remains visible; reducing the pass line must be called a contract change, never token optimization.
+1. **Choose the delivery mode.** `startup-reversible` is the default for low-risk experiments; `gated-high-risk` retains the full pre-release gate path for legal, payment, personal-data, medical, or irreversible systems.
+2. **Write one Launch brief.** It fixes the target user, painful problem, smallest value journey, launch metric, feedback channel, kill criteria, timebox, risk, and rollback. Startup release still requires G1 and the P0/P1/P2/P4 launch documents, but not G2–G4.
+3. **Ship `MVP-1`, not a core library.** MVP-1 needs one real end-to-end journey plus deterministic, rendered/browser, and separated evidence. A typed `ldl-mvp-evidence-v1` manifest binds distinct primary artifacts by path+SHA; empty files, maker self-attestation, and final-report self-citation fail.
+4. **Use the Release ledger as the Launch Gate.** A low-risk release PASS requires MVP-1 PASS, instrumentation, feedback, rollback, an HTTPS live artifact, human approval, and a typed `ldl-release-evidence-v1` manifest with live smoke, telemetry, rollback, and feedback evidence. High-risk mode additionally requires G4 PASS.
+5. **Build–Measure–Learn after launch.** The Experiment ledger records one hypothesis, one change, one metric, measured evidence, and one decision from `ITERATE | EXPAND | PIVOT | STOP`. Any post-MVP feature increment requires a measured experiment signal; unrequested features cannot quietly become PASS.
+6. **Context travels as handles.** A phase packet is at most 8KB and carries requirement IDs, bounded commands/blockers, and artifact `path + SHA-256`; full reports stay on disk. `tools/lean.py verify` rejects stale hashes, path escapes, hidden/nested payloads, and split verbatim reports.
+7. **Execution economy is contractual.** Each project caps relay/checker summaries and checker/rerun counts, and records model/token/call/checker/wall-time telemetry. Malformed, outside, or self-referential cost evidence does not count.
+8. **One batch, one rerun; delta gates, deterministic first.** Tests, hashes, generated sweeps, and browser traces run before an LLM. Unchanged evidence is not replayed. A failed consolidated checker opens one root-class correction batch and one rerun, then HOLD.
+9. **Owner/maker writes are physically separated.** Owner uses `owner/inbox.md` and `owner/outbox.md`; maker preserves one canonical decision under project `raw/` and reviews point to it.
+10. **Verdicts stay separate.** Release PASS, Product PASS, Harness, Readiness, Method, and Final delivery are different claims. Shipping an experiment is not claiming final product completeness.
 
-The reference v0.4 regression suite proves both sides: a completed working MVP fixture passes, while missing rendered evidence, missing independent checks, absent cost telemetry, oversized/stale packets, nested-raw mutation, archive deletion, and directory-symlink bypasses fail deterministically.
+The reference v0.4 suite proves the launch path and the refusal path: startup release can pass with G2–G4 pending after G1+MVP-1, high-risk release cannot; missing launch controls fail; post-MVP increments without measured user signal fail; packet, evidence, telemetry, recursive-raw, archive, and symlink bypasses fail deterministically.
 
 ## Phase 0 — Goal setting (the contract)
 

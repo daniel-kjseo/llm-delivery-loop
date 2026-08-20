@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LDL v0.4 Lean Working-MVP checks and phase-packet validator (stdlib only).
+"""LDL v0.4 Ship-First MVP checks and phase-packet validator (stdlib only).
 
   lean.py verify <packet.json> [--root PROJECT_ROOT]
 
@@ -25,8 +25,15 @@ PACKET_ITEM_MAX_CHARS = 500
 REQUIREMENT_ID = re.compile(r"R-[A-Za-z0-9._-]+$")
 UTC_ISO = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 INCREMENT_COLUMNS = [
-    "Increment", "User journey", "Status", "Deterministic tests",
+    "Increment", "Experiment", "User journey", "Status", "Deterministic tests",
     "Rendered/browser", "Independent check", "Evidence",
+]
+RELEASE_COLUMNS = [
+    "Release", "Verdict", "Increment", "Risk", "Instrumentation", "Feedback",
+    "Rollback", "Live artifact", "Approver", "Released at", "Evidence",
+]
+EXPERIMENT_COLUMNS = [
+    "Experiment", "Hypothesis", "Change", "Metric", "Status", "Evidence", "Decision",
 ]
 COST_COLUMNS = [
     "timestamp", "phase", "role", "model", "input_tokens", "output_tokens",
@@ -44,6 +51,16 @@ def _sha256(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def valid_utc_timestamp(value):
+    if not isinstance(value, str) or not UTC_ISO.fullmatch(value):
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return True
 
 
 def verify_packet(path, root=None):
@@ -168,11 +185,7 @@ def valid_cost_rows(path, project_root):
                     return [], f"cost ledger row {number} has non-integer metrics"
                 if any(value < 0 for value in values):
                     return [], f"cost ledger row {number} has negative metrics"
-                if not UTC_ISO.fullmatch(row["timestamp"]):
-                    return [], f"cost ledger row {number} timestamp must be UTC ISO-8601"
-                try:
-                    datetime.strptime(row["timestamp"], "%Y-%m-%dT%H:%M:%SZ")
-                except ValueError:
+                if not valid_utc_timestamp(row["timestamp"]):
                     return [], f"cost ledger row {number} timestamp must be UTC ISO-8601"
                 _, evidence_error = _project_file(project_root, row["evidence"])
                 if evidence_error:
@@ -246,8 +259,65 @@ def verify_mvp_evidence(path, project_root, increment):
     return errors
 
 
+def verify_release_evidence(path, project_root, release_id, increment, live_url, released_at):
+    errors = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            evidence = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"release evidence is not valid JSON: {exc}"]
+    if not isinstance(evidence, dict) or evidence.get("schema") != "ldl-release-evidence-v1":
+        return ["release evidence schema must be ldl-release-evidence-v1"]
+    if evidence.get("release") != release_id or evidence.get("increment") != increment:
+        errors.append("release evidence identity mismatch")
+    if evidence.get("live_url") != live_url or evidence.get("released_at") != released_at:
+        errors.append("release evidence URL/time does not match release ledger")
+    if not re.match(r"^https://", str(evidence.get("live_url", ""))):
+        errors.append("release evidence live_url must be https")
+    released_at = str(evidence.get("released_at", ""))
+    if not valid_utc_timestamp(released_at):
+        errors.append("release evidence released_at must be UTC ISO-8601")
+    sections = {
+        "smoke": ("PASS", "cases", "console_errors"),
+        "telemetry": ("PASS", "event"),
+        "rollback": ("READY", "command"),
+        "feedback": ("READY", "channel"),
+    }
+    targets = []
+    release_root = os.path.join(project_root, "05_engineering", "evidence", "release")
+    for name, (status, *fields) in sections.items():
+        section = evidence.get(name)
+        if not isinstance(section, dict) or section.get("status") != status:
+            errors.append(f"release evidence {name} status must be {status}")
+            continue
+        for field in fields:
+            value = section.get(field)
+            if field == "cases" and (not isinstance(value, int) or value <= 0):
+                errors.append("release evidence smoke cases must be positive")
+            elif field == "console_errors" and value != 0:
+                errors.append("release evidence console_errors must be 0")
+            elif field not in {"cases", "console_errors"} and (not isinstance(value, str) or not value.strip()):
+                errors.append(f"release evidence {name} missing {field}")
+        artifact = section.get("artifact")
+        if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
+            errors.append(f"release evidence {name} artifact must be path+sha256")
+            continue
+        target, target_error = _project_file(project_root, artifact["path"], release_root)
+        if target_error:
+            errors.append(f"release evidence {name} artifact {target_error}")
+        elif os.path.getsize(target) == 0:
+            errors.append(f"release evidence {name} artifact is empty")
+        elif not re.fullmatch(r"[0-9a-f]{64}", str(artifact["sha256"])) or _sha256(target) != artifact["sha256"]:
+            errors.append(f"release evidence {name} artifact hash mismatch")
+        else:
+            targets.append(target)
+    if len(targets) != len(set(targets)):
+        errors.append("release evidence artifacts must be distinct")
+    return errors
+
+
 def check(lint, proj):
-    """L12 — v0.4 execution-economy and working-MVP invariants."""
+    """L12 — v0.4 Ship-First release, feedback, economy, and MVP invariants."""
     contract_path = os.path.join(proj, "00_CONTRACT.md")
     progress_path = os.path.join(proj, "PROGRESS.md")
     verification_path = os.path.join(proj, "06_VERIFICATION.md")
@@ -258,14 +328,30 @@ def check(lint, proj):
     prel = lint.rel(progress_path)
 
     delivery = lint.section_text(contract, "Delivery profile")
+    launch = lint.section_text(contract, "Launch brief")
     economy = lint.section_text(contract, "Execution economy")
+    delivery_mode = ""
     if not delivery:
         lint.err("L12", f"{crel}: Delivery profile missing")
     else:
-        if lint.scalar_field(delivery, "Delivery mode") != "working-mvp":
-            lint.err("L12", f"{crel}: Delivery mode must be working-mvp")
+        delivery_mode = lint.scalar_field(delivery, "Delivery mode")
+        if delivery_mode not in {"startup-reversible", "gated-high-risk"}:
+            lint.err("L12", f"{crel}: Delivery mode must be startup-reversible or gated-high-risk")
         if lint.scalar_field(delivery, "First executable increment") != "MVP-1":
             lint.err("L12", f"{crel}: First executable increment must be MVP-1")
+        if lint.scalar_field(delivery, "Release strategy") != "ship-first":
+            lint.err("L12", f"{crel}: Release strategy must be ship-first")
+    launch_fields = ("Target user", "Problem", "Smallest value journey", "Launch metric", "Feedback channel", "Kill criteria", "Timebox", "Risk", "Rollback")
+    if not launch:
+        lint.err("L12", f"{crel}: Launch brief missing")
+    else:
+        for field in launch_fields:
+            if not lint.substantive_cell(lint.scalar_field(launch, field)):
+                lint.err("L12", f"{crel}: Launch brief field missing - {field}")
+        risk = lint.scalar_field(launch, "Risk")
+        expected_risk = "low-reversible" if delivery_mode == "startup-reversible" else "high-risk"
+        if delivery_mode and risk != expected_risk:
+            lint.err("L12", f"{crel}: Launch brief Risk must be {expected_risk}")
     if not economy:
         lint.err("L12", f"{crel}: Execution economy missing")
     else:
@@ -294,9 +380,31 @@ def check(lint, proj):
             if ledger_path_error:
                 lint.err("L12", f"{crel}: Token/call ledger {ledger_path_error}")
 
+    experiment_rows = lint.table_rows(progress, "Experiment ledger", EXPERIMENT_COLUMNS, "L12", prel)
+    experiment_ids = [row["Experiment"] for row in experiment_rows]
+    if len(experiment_ids) != len(set(experiment_ids)):
+        lint.err("L12", f"{prel}: duplicate experiment ID")
+    experiments = {row["Experiment"]: row for row in experiment_rows}
+    for row in experiment_rows:
+        if row["Status"] not in {"NOT_RUN", "RUNNING", "MEASURED", "HOLD"}:
+            lint.err("L12", f"{prel}: invalid experiment status - {row['Experiment']} {row['Status']}")
+        if row["Decision"] not in {"PENDING", "ITERATE", "EXPAND", "PIVOT", "STOP"}:
+            lint.err("L12", f"{prel}: invalid experiment decision - {row['Experiment']} {row['Decision']}")
+        if row["Status"] == "MEASURED":
+            if row["Decision"] == "PENDING":
+                lint.err("L12", f"{prel}: measured experiment requires a decision - {row['Experiment']}")
+            target = lint.local_link_target(proj, row["Evidence"])
+            experiment_root = os.path.realpath(os.path.join(proj, "05_engineering", "evidence", "experiments"))
+            if (not target or target.startswith(("http://", "https://", "mailto:")) or not os.path.isfile(target)
+                    or os.path.commonpath([experiment_root, os.path.realpath(target)]) != experiment_root
+                    or os.path.getsize(target) == 0):
+                lint.err("L12", f"{prel}: measured experiment missing primary evidence - {row['Experiment']}")
+
     rows = lint.table_rows(progress, "Increment ledger", INCREMENT_COLUMNS, "L12", prel)
     if not rows or rows[0]["Increment"] != "MVP-1":
         lint.err("L12", f"{prel}: first increment must be MVP-1")
+    elif rows[0]["Experiment"] != "LAUNCH":
+        lint.err("L12", f"{prel}: MVP-1 experiment must be LAUNCH")
     allowed = {"PENDING", "RED", "GREEN", "PASS", "HOLD", "FAIL"}
     for row in rows:
         if row["Status"] not in allowed:
@@ -315,10 +423,66 @@ def check(lint, proj):
                 ]) != os.path.realpath(os.path.join(proj, "05_engineering")):
                 lint.err("L12", f"{prel}: PASS increment evidence must be under 05_engineering - {row['Increment']}")
             else:
-                for error in verify_mvp_evidence(target, proj, row["Increment"]):
-                    lint.err("L12", f"{prel}: {error} - {row['Increment']}")
+                if row["Increment"] == "MVP-1":
+                    for error in verify_mvp_evidence(target, proj, row["Increment"]):
+                        lint.err("L12", f"{prel}: {error} - {row['Increment']}")
+                else:
+                    increment_root = os.path.realpath(os.path.join(proj, "05_engineering", "evidence", "increments"))
+                    if (os.path.commonpath([increment_root, os.path.realpath(target)]) != increment_root
+                            or os.path.getsize(target) == 0):
+                        lint.err("L12", f"{prel}: post-MVP increment requires its own primary artifact - {row['Increment']}")
+                    experiment = experiments.get(row["Experiment"])
+                    if (not experiment or experiment["Status"] != "MEASURED"
+                            or experiment["Decision"] not in {"ITERATE", "EXPAND"}):
+                        lint.err("L12", f"{prel}: PASS increment requires measured experiment signal - {row['Increment']}")
 
     phase_rows = lint.table_rows(progress, "Phase progress", ["Phase", "Status", "Date", "Deliverable"], "L12", prel)
+    phase_status = {row["Phase"]: row["Status"].lower() for row in phase_rows}
+    release_rows = lint.table_rows(progress, "Release ledger", RELEASE_COLUMNS, "L12", prel)
+    release_ids = [row["Release"] for row in release_rows]
+    if len(release_ids) != len(set(release_ids)):
+        lint.err("L12", f"{prel}: duplicate release ID")
+    gate_columns = ["Gate", "Verdict", "Contract version", "Approval mode", "Approver", "Approved at", "Evidence"]
+    gate_rows = lint.table_rows(progress, "Gate ledger", gate_columns, "L12", prel)
+    gates = {row["Gate"]: row for row in gate_rows}
+    increments = {row["Increment"]: row for row in rows}
+    for row in release_rows:
+        if row["Verdict"] not in {"PENDING", "PASS", "HOLD", "FAIL"}:
+            lint.err("L12", f"{prel}: invalid release verdict - {row['Release']} {row['Verdict']}")
+            continue
+        if row["Verdict"] != "PASS":
+            continue
+        if gates.get("G1", {}).get("Verdict") != "PASS":
+            lint.err("L12", f"{prel}: release PASS requires G1 PASS")
+        required_launch_phases = ("P0 contract", "P1 requirements", "P2 structure", "P4 scoping")
+        missing_phases = [phase for phase in required_launch_phases if phase_status.get(phase) != "done"]
+        if missing_phases:
+            lint.err("L12", f"{prel}: release PASS requires launch documents done - {', '.join(missing_phases)}")
+        increment = increments.get(row["Increment"])
+        if not increment or increment["Status"] != "PASS":
+            lint.err("L12", f"{prel}: release PASS requires increment PASS - {row['Increment']}")
+        if any(row[field] != "PASS" for field in ("Instrumentation", "Feedback", "Rollback")):
+            lint.err("L12", f"{prel}: release PASS requires instrumentation/feedback/rollback PASS")
+        if not re.match(r"^https://", row["Live artifact"]):
+            lint.err("L12", f"{prel}: release PASS requires https live artifact")
+        if not lint.substantive_cell(row["Approver"]):
+            lint.err("L12", f"{prel}: release PASS missing approver")
+        if not valid_utc_timestamp(row["Released at"]):
+            lint.err("L12", f"{prel}: release PASS Released at must be UTC ISO-8601")
+        expected_risk = "low-reversible" if delivery_mode == "startup-reversible" else "high-risk"
+        if row["Risk"] != expected_risk:
+            lint.err("L12", f"{prel}: release risk does not match delivery mode")
+        if delivery_mode == "gated-high-risk" and gates.get("G4", {}).get("Verdict") != "PASS":
+            lint.err("L12", f"{prel}: high-risk release requires G4 PASS")
+        target = lint.local_link_target(proj, row["Evidence"])
+        release_root = os.path.realpath(os.path.join(proj, "05_engineering", "evidence"))
+        if (not target or target.startswith(("http://", "https://", "mailto:")) or not os.path.isfile(target)
+                or os.path.commonpath([release_root, os.path.realpath(target)]) != release_root):
+            lint.err("L12", f"{prel}: release PASS missing local evidence - {row['Release']}")
+        else:
+            for error in verify_release_evidence(target, proj, row["Release"], row["Increment"], row["Live artifact"], row["Released at"]):
+                lint.err("L12", f"{prel}: {error} - {row['Release']}")
+
     completed = any(row["Phase"] == "P5+P6 increments" and row["Status"].lower() == "done" for row in phase_rows)
     finals = lint.section_text(report, "Final verdicts")
     product_pass = lint.scalar_field(finals, "Product") == "PASS"
