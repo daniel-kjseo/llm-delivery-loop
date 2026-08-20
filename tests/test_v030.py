@@ -125,9 +125,14 @@ VERIFICATION = """# 06_VERIFICATION — good
 
 class V030LintTests(unittest.TestCase):
     def setUp(self):
+        warnings.simplefilter("ignore", ResourceWarning)
         self.tmp = tempfile.mkdtemp(prefix="ldl-v030-")
         self.ws = os.path.join(self.tmp, "ws")
         scaffold.init(self.ws)
+        # This suite freezes the v0.3 schema while scaffold.init now creates
+        # the latest v0.4 workspace. v0.4-specific coverage lives in test_v040.
+        with open(os.path.join(self.ws, ".ldl-version"), "w", encoding="utf-8") as handle:
+            handle.write("0.3.0\n")
         self.proj = scaffold.new_project(self.ws, "good", "2026-01-01")
         files = {
             "00_CONTRACT.md": CONTRACT,

@@ -38,8 +38,10 @@ State for L5/L6 lives in logs/.lint-state.json (created on first run).
   L10 safety model     impact HOLD propagates to action/readiness verdicts
   L11 verdict split    harness/product/readiness/method verdicts cannot imply
                        one another or erase historical violations
+  L12 lean MVP         execution-economy ceilings, MVP-1 rendered/independent
+                       proof, packet/cost telemetry completion boundary
 """
-import hashlib, json, os, re, sys
+import hashlib, json, os, re, stat, sys
 from html.parser import HTMLParser
 
 LINK = re.compile(r"\]\(([^)]+)\)")
@@ -102,7 +104,8 @@ class Lint:
     def read_text(self, path, code):
         """Read a managed text file; an unreadable file is a verdict, not a traceback."""
         try:
-            return open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as handle:
+                return handle.read()
         except UnicodeDecodeError:
             self.err(code, f"not valid UTF-8: {self.rel(path)}")
         except OSError:
@@ -110,6 +113,11 @@ class Lint:
         return None
 
     def links_of(self, path):
+        # v0.4 contract archives are byte snapshots, not live navigable docs.
+        # Their bytes remain under L5; only link traversal is opaque.
+        parts = self.rel(path).split(os.sep)
+        if "raw" in parts and "contract-archive" in parts:
+            return []
         text = self.read_text(path, "L1")
         if text is None:
             return []
@@ -238,10 +246,21 @@ class Lint:
             full = os.path.join(projdir, d)
             if not os.path.isdir(full):
                 continue
+            if os.path.islink(full):
+                self.err("L5", f"project directory symlink (project must be a real directory): {self.rel(full)}")
+                continue
             if not NAME_RULE.match(d):
                 self.err("L3", f"project folder naming (YYYY-MM-DD_<name>): projects/{d}")
             self.check_contract(full)
             self.check_integrity_model(full)
+            marker = os.path.join(self.root, ".ldl-version")
+            marker_value = ""
+            if os.path.isfile(marker):
+                with open(marker, encoding="utf-8") as handle:
+                    marker_value = handle.read().strip()
+            if marker_value == "0.4.0":
+                import lean
+                lean.check(self, full)
 
     def check_contract(self, proj):
         c = os.path.join(proj, "00_CONTRACT.md")
@@ -340,7 +359,8 @@ class Lint:
         state = {"raw": {}, "logs": {}, "schema": None}
         if os.path.exists(state_path):
             try:
-                loaded = json.load(open(state_path, encoding="utf-8"))
+                with open(state_path, encoding="utf-8") as handle:
+                    loaded = json.load(handle)
                 if not isinstance(loaded, dict):
                     raise ValueError("state is not an object")
                 state = loaded
@@ -358,24 +378,49 @@ class Lint:
         if os.path.isfile(marker):
             marker_value = self.read_text(marker, "L7")
             marker_value = marker_value.strip() if marker_value is not None else None
-            if marker_value != "0.3.0":
+            if marker_value not in {"0.3.0", "0.4.0"}:
                 self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
         if state.get("schema") and marker_value is None:
             self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
         if marker_value is not None:
-            state["schema"] = state.get("schema") or marker_value
-        # L5: raw/ hash manifest (root and per-project raw/)
+            prior_schema = state.get("schema")
+            if prior_schema in {None, marker_value}:
+                state["schema"] = marker_value
+            elif prior_schema == "0.3.0" and marker_value == "0.4.0":
+                state["schema"] = "0.4.0"
+            else:
+                self.err("L7", f"lint schema {prior_schema} does not match marker {marker_value}")
+        # L5: recursive raw/ hash manifest (root and per-project raw/).
+        # Outside raw, ordinary skip dirs stay pruned. Inside raw, no name can
+        # escape immutability; directory symlinks are rejected, never followed.
         seen_raw = set()
         for r, dirs, files in os.walk(self.root):
-            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-            if os.path.basename(r) != "raw":
+            parts = self.rel(r).split(os.sep)
+            inside_raw = "raw" in parts
+            for name in list(dirs):
+                target = os.path.join(r, name)
+                if (inside_raw or name == "raw") and os.path.islink(target):
+                    self.err("L5", f"raw directory symlink (evidence must be a real directory): {self.rel(target)}")
+                    dirs.remove(name)
+            if not inside_raw:
+                dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
                 continue
             for f in files:
                 p = os.path.join(r, f)
                 key = self.rel(p)
                 seen_raw.add(key)
                 try:
-                    h = hashlib.sha256(open(p, "rb").read()).hexdigest()
+                    mode = os.stat(p).st_mode
+                    if not stat.S_ISREG(mode):
+                        raise OSError("not a regular file")
+                    digest = hashlib.sha256()
+                    with open(p, "rb") as handle:
+                        while True:
+                            chunk = handle.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            digest.update(chunk)
+                    h = digest.hexdigest()
                 except OSError:
                     self.err("L5", f"raw file unreadable: {key}")
                     continue
@@ -393,7 +438,8 @@ class Lint:
                 p = os.path.join(r, f)
                 key = self.rel(p)
                 try:
-                    data = open(p, "rb").read()
+                    with open(p, "rb") as handle:
+                        data = handle.read()
                 except OSError:
                     self.err("L6", f"log unreadable: {key}")
                     continue
@@ -405,7 +451,8 @@ class Lint:
                 state["logs"][key] = {"len": len(data), "sha": hashlib.sha256(data).hexdigest()}
         if not self.errors:
             os.makedirs(os.path.dirname(state_path), exist_ok=True)
-            json.dump(state, open(state_path, "w", encoding="utf-8"), indent=1)
+            with open(state_path, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, indent=1)
 
     # -- L7 ---------------------------------------------------------------
     def check_installation(self):
@@ -446,9 +493,9 @@ def selftest():
     results = {}
     try:
         scaffold.init(ws)
-        results["init copies v0.3 tools"] = all(
+        results["init copies v0.4 tools"] = all(
             os.path.isfile(os.path.join(ws, "tools", name))
-            for name in ("scaffold.py", "lint.py", "integrity.py"))
+            for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py"))
         version_marker = os.path.join(ws, ".ldl-version")
         os.remove(version_marker)  # fixtures 1-28 prove legacy compatibility
         proj = scaffold.new_project(ws, "good", "2026-01-01")
