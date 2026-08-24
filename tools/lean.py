@@ -424,20 +424,33 @@ def check(lint, proj):
 
     delivery = lint.section_text(contract, "Delivery profile")
     launch = lint.section_text(contract, "Launch brief")
+    decision_brief = lint.section_text(contract, "Decision brief")
     economy = lint.section_text(contract, "Execution economy")
     delivery_mode = ""
     if not delivery:
         lint.err("L12", f"{crel}: Delivery profile missing")
     else:
         delivery_mode = lint.scalar_field(delivery, "Delivery mode")
-        if delivery_mode not in {"startup-reversible", "gated-high-risk"}:
-            lint.err("L12", f"{crel}: Delivery mode must be startup-reversible or gated-high-risk")
-        if lint.scalar_field(delivery, "First executable increment") != "MVP-1":
-            lint.err("L12", f"{crel}: First executable increment must be MVP-1")
-        if lint.scalar_field(delivery, "Release strategy") != "ship-first":
-            lint.err("L12", f"{crel}: Release strategy must be ship-first")
+        if delivery_mode not in {"startup-reversible", "gated-high-risk", "pre-engineering-decision"}:
+            lint.err("L12", f"{crel}: invalid Delivery mode")
+        if delivery_mode == "pre-engineering-decision":
+            if lint.scalar_field(delivery, "Decision endpoint") != "G3":
+                lint.err("L12", f"{crel}: pre-engineering decision endpoint must be G3")
+        else:
+            if lint.scalar_field(delivery, "First executable increment") != "MVP-1":
+                lint.err("L12", f"{crel}: First executable increment must be MVP-1")
+            if lint.scalar_field(delivery, "Release strategy") != "ship-first":
+                lint.err("L12", f"{crel}: Release strategy must be ship-first")
     launch_fields = ("Target user", "Problem", "Smallest value journey", "Launch metric", "Feedback channel", "Kill criteria", "Timebox", "Risk", "Rollback")
-    if not launch:
+    if delivery_mode == "pre-engineering-decision":
+        decision_fields = ("Decision owner", "Problem space", "Decision deliverable", "Decision metric", "Evidence boundary", "Kill criteria", "Timebox", "Risk", "Rollback")
+        if not decision_brief:
+            lint.err("L12", f"{crel}: Decision brief missing")
+        else:
+            for field in decision_fields:
+                if not lint.substantive_cell(lint.scalar_field(decision_brief, field)):
+                    lint.err("L12", f"{crel}: Decision brief field missing - {field}")
+    elif not launch:
         lint.err("L12", f"{crel}: Launch brief missing")
     else:
         for field in launch_fields:
@@ -474,6 +487,9 @@ def check(lint, proj):
             ledger_path, ledger_path_error = _project_file(proj, ledger_rel, os.path.join(proj, "logs"))
             if ledger_path_error:
                 lint.err("L12", f"{crel}: Token/call ledger {ledger_path_error}")
+
+    if delivery_mode == "pre-engineering-decision":
+        return
 
     experiment_rows = lint.table_rows(progress, "Experiment ledger", EXPERIMENT_COLUMNS, "L12", prel)
     experiment_ids = [row["Experiment"] for row in experiment_rows]

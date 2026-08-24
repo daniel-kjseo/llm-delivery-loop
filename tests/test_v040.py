@@ -134,6 +134,10 @@ class V040Tests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="ldl-v040-")
         self.ws = os.path.join(self.tmp, "ws")
         scaffold.init(self.ws)
+        # Freeze this suite to the v0.4.0 schema. v0.4.1 coverage lives in
+        # test_v041.py; the latest scaffolder otherwise emits 0.4.1.
+        with open(os.path.join(self.ws, ".ldl-version"), "w", encoding="utf-8") as handle:
+            handle.write("0.4.0\n")
         self.proj = scaffold.new_project(self.ws, "lean", "2026-01-01")
         files = {
             "00_CONTRACT.md": CONTRACT,

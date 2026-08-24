@@ -3,6 +3,7 @@
 This module intentionally checks structural invariants only. Whether evidence is
 true or a recommendation is good remains a separated semantic judgment.
 """
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -10,11 +11,22 @@ from datetime import datetime, timezone
 
 GATE_COLUMNS = ["Gate", "Verdict", "Contract version", "Approval mode", "Approver", "Approved at", "Evidence"]
 EVIDENCE_COLUMNS = ["Claim ID", "Label", "Claim", "Source artifact", "Captured at", "Scope/window", "Transform/reproducer", "Status"]
+EVIDENCE_COLUMNS_V041 = ["Claim ID", "Evidence level", "Evidence domain", "Claim", "Source artifact", "Captured at", "Scope/window", "Transform/reproducer", "Claim lifecycle"]
 DIMENSION_COLUMNS = ["Dimension ID", "Status", "Evidence"]
 ACTION_COLUMNS = ["Action ID", "Impact dimensions", "Preconditions", "Approval tier", "Approval evidence", "Canary", "Rollback", "Ready"]
 REQUIREMENT_COLUMNS = ["Requirement ID", "Verdict", "Evidence"]
 REQUIREMENTS_LEDGER_COLUMNS = ["Requirement ID", "Type", "Priority", "Requirement", "Verification", "Source"]
 PHASE_COLUMNS = ["Phase", "Status", "Date", "Deliverable"]
+EVIDENCE_DOMAINS = {"SUPPLY", "DEMAND", "BEHAVIOR", "CAUSAL", "LEGAL", "OPERATIONAL"}
+
+
+def _inside(path, boundary):
+    try:
+        lexical = os.path.commonpath([os.path.abspath(boundary), os.path.abspath(path)]) == os.path.abspath(boundary)
+        resolved = os.path.commonpath([os.path.realpath(boundary), os.path.realpath(path)]) == os.path.realpath(boundary)
+        return lexical and resolved
+    except ValueError:
+        return False
 
 
 def _read(lint, path, code):
@@ -87,6 +99,29 @@ def check(lint, proj):
         if row["Approval mode"].lower() != approval_mode:
             lint.err("L8", f"{lint.rel(progress_path)}: gate approval mode does not match contract - {name}")
         if verdict != "PASS":
+            target = lint.local_link_target(proj, row["Evidence"])
+            if lint.schema_version() == "0.4.1" and verdict in {"HOLD", "FAIL"}:
+                if not target or not target.endswith(".json"):
+                    lint.err("L8", f"{lint.rel(progress_path)}: {name} {verdict} requires typed decision evidence")
+                elif not _inside(target, os.path.join(proj, "raw")):
+                    lint.err("L8", f"{lint.rel(progress_path)}: {name} typed decision must be immutable under project raw/")
+                elif not os.path.isfile(target):
+                    lint.err("L8", f"{lint.rel(progress_path)}: {name} typed decision missing")
+                else:
+                    try:
+                        decision = json.loads(_read(lint, target, "L8"))
+                        import workflow
+                        workflow.validate_gate_decision(proj, decision)
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} typed decision invalid - {exc}")
+                    else:
+                        expected = {
+                            "gate": name, "contract_version": version, "verdict": verdict,
+                            "approval_mode": approval_mode, "approver": row["Approver"],
+                            "decided_at": row["Approved at"],
+                        }
+                        if any(decision[field] != value for field, value in expected.items()):
+                            lint.err("L8", f"{lint.rel(progress_path)}: {name} typed decision does not match gate row")
             continue
         for prior in range(1, number):
             prior_row = gates.get(f"G{prior}")
@@ -121,16 +156,31 @@ def check(lint, proj):
                 lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence must be immutable under project raw/")
             else:
                 approval_text = _read(lint, target, "L8")
-                if not lint.substantive_cell(approval_text):
-                    lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence is empty or placeholder")
-                gate_number = name[1:]
-                mentioned = set()
-                for match in re.finditer(r"\b(?:G([1-4])|Gate\s+([1-4]))\b", approval_text, re.I):
-                    mentioned.add("G" + (match.group(1) or match.group(2)))
-                if mentioned != {name}:
-                    lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify this gate")
-                if not re.search(rf"\b{re.escape(version)}\b", approval_text, re.I):
-                    lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify contract {version}")
+                if target.endswith(".json") and lint.schema_version() == "0.4.1":
+                    try:
+                        decision = json.loads(approval_text)
+                        import workflow
+                        workflow.validate_gate_decision(proj, decision)
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} typed approval invalid - {exc}")
+                    else:
+                        expected = {
+                            "gate": name, "contract_version": version, "verdict": verdict,
+                            "approval_mode": approval_mode, "approver": row["Approver"],
+                            "decided_at": row["Approved at"],
+                        }
+                        if any(decision[field] != value for field, value in expected.items()):
+                            lint.err("L8", f"{lint.rel(progress_path)}: {name} typed approval does not match gate row")
+                else:
+                    if not lint.substantive_cell(approval_text):
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence is empty or placeholder")
+                    mentioned = set()
+                    for match in re.finditer(r"\b(?:G([1-4])|Gate\s+([1-4]))\b", approval_text, re.I):
+                        mentioned.add("G" + (match.group(1) or match.group(2)))
+                    if mentioned != {name}:
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify this gate")
+                    if not re.search(rf"\b{re.escape(version)}\b", approval_text, re.I):
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify contract {version}")
                 real_target = os.path.realpath(target)
                 if real_target in used_gate_evidence:
                     lint.err("L8", f"{lint.rel(progress_path)}: {name} reuses another gate approval artifact")
@@ -158,7 +208,21 @@ def check(lint, proj):
             lint.err("L8", f"{lint.rel(log_path)}: {gate} PASS missing append-only gate event for contract {version}")
 
     evidence_path = os.path.join(proj, "03_EVIDENCE.md")
-    evidence_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS, "L9", lint.rel(evidence_path))
+    if lint.schema_version() == "0.4.1":
+        raw_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS_V041, "L9", lint.rel(evidence_path))
+        evidence_rows = []
+        for row in raw_rows:
+            domain = row["Evidence domain"]
+            if domain not in EVIDENCE_DOMAINS:
+                lint.err("L9", f"{lint.rel(evidence_path)}: invalid evidence domain - {row['Claim ID']} {domain}")
+            evidence_rows.append({
+                "Claim ID": row["Claim ID"], "Label": row["Evidence level"],
+                "Claim": row["Claim"], "Source artifact": row["Source artifact"],
+                "Captured at": row["Captured at"], "Scope/window": row["Scope/window"],
+                "Transform/reproducer": row["Transform/reproducer"], "Status": row["Claim lifecycle"],
+            })
+    else:
+        evidence_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS, "L9", lint.rel(evidence_path))
     claim_ids = [row["Claim ID"] for row in evidence_rows]
     if len(claim_ids) != len(set(claim_ids)):
         lint.err("L9", f"{lint.rel(evidence_path)}: duplicate Claim ID")

@@ -7,7 +7,7 @@
 > **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
 > Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
 
-**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
+**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
 
 **If you are looking for** an AI agent workflow that survives real projects, a way to stop re-explaining context to your agent every session, contract-first prompting, human-in-the-loop quality gates, or a second brain that agents actually maintain — that is what LDL is for.
 
@@ -74,6 +74,28 @@ v0.3 prevented structurally green work from laundering bad evidence. A field run
 10. **Verdicts stay separate.** Release PASS, Product PASS, Harness, Readiness, Method, and Final delivery are different claims. Shipping an experiment is not claiming final product completeness.
 
 The reference v0.4 suite proves the launch path and the refusal path: startup release can pass with G2–G4 pending after G1+MVP-1, high-risk release cannot; missing launch controls fail; post-MVP increments without measured user signal fail; packet, evidence, telemetry, recursive-raw, archive, and symlink bypasses fail deterministically.
+
+## v0.4.1 — Safe Pre-Engineering Harness
+
+The first v0.4 field evaluation stopped a weak user-problem claim, but also exposed harness defects: failed agents could partially write the target, whole-workspace lint reported future-phase placeholders, a decision-only project had to explain MVP/Release fields, and free-form gate evidence was brittle. v0.4.1 promotes those failures into enforcement.
+
+1. **Scratch is the default write boundary.** `workflow.py scratch-init TARGET SCRATCH` creates a baseline-bound copy. `workflow.py promote SCRATCH TARGET --through P<n>` refuses target drift, existing-raw mutation, log rewrites, deleted files, and lint failures before staging changed files for promotion.
+2. **Raw capture is create-only.** `workflow.py raw-put PROJECT relative/path SOURCE` uses exclusive creation and rejects path escape, symlink traversal, and overwrite.
+3. **Lint is phase-aware.** Run `lint.py --through P0`, `--through P3`, `--through P4`, or `--final` for the whole-workspace verdict. Omitting both also defaults to final. Future-phase placeholders no longer force fake rows before their owning phase.
+4. **P0 is mechanically lean.** A v0.4.1 `00_CONTRACT.md` over 8,192 bytes fails L4. Detail belongs in linked evidence/reviews, not the governing surface.
+5. **Decision-only work has its own profile.** `scaffold.py new NAME --profile pre-engineering-decision` ends at G3, uses a Decision brief, and creates no Increment/Release/Experiment ledgers. `startup-reversible` remains the default; `gated-high-risk` remains available.
+6. **Evidence semantics are explicit.** `Evidence level` is `[hypothesis] | [measured] | [proven]`; `Claim lifecycle` is `ACTIVE | DISPUTED | SUPERSEDED`; `Evidence domain` is `SUPPLY | DEMAND | BEHAVIOR | CAUSAL | LEGAL | OPERATIONAL`. A fenced example ships in the scaffold without becoming live evidence.
+7. **P1→P6 IDs synchronize deterministically.** `workflow.py sync-verdicts PROJECT` adds missing requirement verdict rows as `NOT_RUN`, preserves existing rows, and rejects missing/duplicate/invalid IDs.
+8. **Gate decisions are typed.** `workflow.py gate-validate` and `gate-apply` verify an `ldl-gate-decision-v1` JSON manifest, content-addressed evidence, gate/version/mode/timestamp, phase/prior-gate preconditions, create-only raw preservation, the Gate ledger, and the append-only event. Legacy Markdown approvals remain readable for v0.3/v0.4.
+
+The default safe sequence is:
+
+```bash
+python3 tools/workflow.py scratch-init . /tmp/my-ldl-run
+# run the maker only inside /tmp/my-ldl-run
+python3 /tmp/my-ldl-run/tools/lint.py --through P0 /tmp/my-ldl-run
+python3 tools/workflow.py promote /tmp/my-ldl-run . --through P0
+```
 
 ## Phase 0 — Goal setting (the contract)
 
@@ -276,7 +298,7 @@ Then the global constitution (first-time users): if there is no user-level globa
    ├── templates/                 # task prompt & document templates
    ├── logs/                      # outer-loop log — collection purposes, ingest verdicts, lint (log.md)
    ├── owner/                     # owner inbox/outbox — owner never writes project evidence directly
-   ├── tools/                     # scaffold.py + lint.py + integrity.py + v0.4 lean.py
+   ├── tools/                     # scaffold.py + lint.py + integrity.py + lean.py + workflow.py
    └── projects/                  ← inner loop = one folder per project
        ├── CLAUDE.md              # shared project protocol — Phase 0–6 gates, naming, document & log standards
        └── YYYY-MM-DD_<name>/     ← start date, never renamed
@@ -292,7 +314,7 @@ Then the global constitution (first-time users): if there is no user-level globa
            └── logs/              # log.md + cost-ledger.csv + sessions/
    ```
 
-   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), and [`tools/lean.py`](tools/lean.py). `scaffold.py init` creates a new v0.4 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. A marked v0.3 workspace upgrades only with `--migrate-v04` and only when `projects/` contains no project directories; move closed projects out or start a fresh v0.4 workspace. The tool never rewrites live v0.3 contracts. `scaffold.py new` registers the project in `index.md`. A rewrite must keep the same verdicts: `lint.py --selftest`, `tests/test_v030.py`, and `tests/test_v040.py` cover the legacy harness, composed v0.3 false-green paths, and v0.4 token/MVP/raw boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
+   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), and [`tools/workflow.py`](tools/workflow.py). `scaffold.py init` creates a new v0.4.1 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. A marked v0.3 workspace upgrades to v0.4.0 only with `--migrate-v04`; an empty v0.4.0 workspace upgrades only with `--migrate-v041`. Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint or `--profile gated-high-risk` for the full risk path. A rewrite must keep the same verdicts: `lint.py --selftest`, `tests/test_v030.py`, `tests/test_v040.py`, and `tests/test_v041.py` cover legacy, evidence/safety, Ship-First, and safe pre-engineering boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
 
    The scaffolder pre-creates every numbered document as a headed skeleton — an empty `03_EVIDENCE.md` in a fresh project is a to-do, not litter, and link-closure still applies to it: every phase document is reachable from the project's `PROGRESS.md`.
 
@@ -301,7 +323,7 @@ Then the global constitution (first-time users): if there is no user-level globa
    Additionally: set the three permission tiers (unattended = read-only, always; reversible = backup first; irreversible = explicit re-confirmation) and a measurement baseline (measure the current value once, now).
 
 **Step 3 — Engrave the constitutions.** In the **workspace constitution** (skeleton of six parts — identity in one sentence / principles / how we work / permissions and limits / scope constraints / center), write the outer-loop protocol (Ingest·Query·Lint, wiki standards). In the **shared project protocol** (`projects/CLAUDE.md`), write the Phase 0–6 gate, document, and log standards, plus the instruction: **"Read the active project's contract (`00_CONTRACT.md`) before starting any work. Work outside the contract only after contract-change approval."** Transfer only the rules needed, rewritten in the user's own language — never copy this document wholesale. Purpose: a future session's agent behaves by the methodology without ever seeing this file. The reference lint fails while either installation sentinel remains; deleting the sentence without replacing the protocol is not engraving.
-**Step 4 — Verify the installation.** Confirm `tools/scaffold.py`, `tools/lint.py`, `tools/integrity.py`, and `tools/lean.py` exist and execute inside the new workspace. Run `python3 tools/lint.py --selftest`; validate one packet with `python3 tools/lean.py verify <packet.json> --root <project>`; then create the first project, confirm index registration, and complete Phase 0 with the Governance profile, Delivery profile, Execution economy, and read-only verifier setup. In a disposable fixture, demonstrate at least one failure from each class: below-criteria contract, orphan document, Gate-order violation, source-less measured claim, HOLD action marked ready, NOT_RUN rolled into Product PASS, MVP-1 without rendered/independent proof, and stale artifact hash. Report executed verdicts, not intentions.
+**Step 4 — Verify the installation.** Confirm all five tools execute. Run `python3 tools/lint.py --selftest`; validate one phase packet; create the first project and complete Phase 0; run `python3 tools/lint.py --through P0 .`; then prove `workflow.py scratch-init` and `promote --through P0` on a disposable copy. Demonstrate rejection of target drift, existing-raw mutation, an oversized contract, a stale artifact hash, a stale typed Gate evidence hash, and a missing requirement verdict. Report executed verdicts, not intentions.
 
 ## Principles
 

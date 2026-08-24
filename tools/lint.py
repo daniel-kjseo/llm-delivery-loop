@@ -90,9 +90,19 @@ def structural_text(markup):
 
 
 class Lint:
-    def __init__(self, root):
+    def __init__(self, root, through="final"):
         self.root = os.path.abspath(root)
+        if through not in {"P0", "P3", "P4", "final"}:
+            raise ValueError(f"invalid lint stage: {through}")
+        self.through = through
         self.errors = []
+
+    def schema_version(self):
+        marker = os.path.join(self.root, ".ldl-version")
+        if not os.path.isfile(marker):
+            return None
+        text = self.read_text(marker, "L7")
+        return text.strip() if text is not None else None
 
     def err(self, code, msg):
         self.errors.append(f"[{code}] {msg}")
@@ -121,6 +131,7 @@ class Lint:
         text = self.read_text(path, "L1")
         if text is None:
             return []
+        text = structural_text(text)
         out = []
         for m in LINK.finditer(text):
             t = m.group(1).strip()
@@ -253,12 +264,8 @@ class Lint:
                 self.err("L3", f"project folder naming (YYYY-MM-DD_<name>): projects/{d}")
             self.check_contract(full)
             self.check_integrity_model(full)
-            marker = os.path.join(self.root, ".ldl-version")
-            marker_value = ""
-            if os.path.isfile(marker):
-                with open(marker, encoding="utf-8") as handle:
-                    marker_value = handle.read().strip()
-            if marker_value == "0.4.0":
+            marker_value = self.schema_version()
+            if marker_value in {"0.4.0", "0.4.1"}:
                 import lean
                 lean.check(self, full)
 
@@ -271,6 +278,8 @@ class Lint:
         text = self.read_text(c, "L4")
         if text is None:
             return
+        if self.schema_version() == "0.4.1" and os.path.getsize(c) > 8192:
+            self.err("L4", f"{rel}: contract exceeds 8192 bytes - {os.path.getsize(c)}")
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
         def substantive(body):
@@ -378,7 +387,7 @@ class Lint:
         if os.path.isfile(marker):
             marker_value = self.read_text(marker, "L7")
             marker_value = marker_value.strip() if marker_value is not None else None
-            if marker_value not in {"0.3.0", "0.4.0"}:
+            if marker_value not in {"0.3.0", "0.4.0", "0.4.1"}:
                 self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
         if state.get("schema") and marker_value is None:
             self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
@@ -386,8 +395,8 @@ class Lint:
             prior_schema = state.get("schema")
             if prior_schema in {None, marker_value}:
                 state["schema"] = marker_value
-            elif prior_schema == "0.3.0" and marker_value == "0.4.0":
-                state["schema"] = "0.4.0"
+            elif (prior_schema, marker_value) in {("0.3.0", "0.4.0"), ("0.3.0", "0.4.1"), ("0.4.0", "0.4.1")}:
+                state["schema"] = marker_value
             else:
                 self.err("L7", f"lint schema {prior_schema} does not match marker {marker_value}")
         # L5: recursive raw/ hash manifest (root and per-project raw/).
@@ -468,10 +477,34 @@ class Lint:
                     self.err("L7", f"installation stub remains: {rel}")
 
     # -- run --------------------------------------------------------------
+    def filter_stage_errors(self):
+        if self.through == "final":
+            return
+        kept = []
+        for error in self.errors:
+            match = re.match(r"^\[(L\d+)\]", error)
+            code = match.group(1) if match else ""
+            if self.through == "P0":
+                if code in {"L9", "L10", "L11"}:
+                    if "00_CONTRACT.md" not in error:
+                        continue
+                if code == "L12" and "00_CONTRACT.md" not in error:
+                    continue
+            elif self.through == "P3":
+                if code == "L10" and "00_CONTRACT.md" not in error:
+                    continue
+                if code == "L9" and "04_SCOPE.md" in error:
+                    continue
+                if code == "L12" and "00_CONTRACT.md" not in error:
+                    continue
+            kept.append(error)
+        self.errors = kept
+
     def run(self):
         self.check_links()
         self.check_projects()
         self.check_installation()
+        self.filter_stage_errors()
         self.check_state()
         if self.errors:
             print(f"LINT FAIL - {len(self.errors)} issue(s)")
@@ -493,9 +526,9 @@ def selftest():
     results = {}
     try:
         scaffold.init(ws)
-        results["init copies v0.4 tools"] = all(
+        results["init copies current tools"] = all(
             os.path.isfile(os.path.join(ws, "tools", name))
-            for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py"))
+            for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py"))
         version_marker = os.path.join(ws, ".ldl-version")
         os.remove(version_marker)  # fixtures 1-28 prove legacy compatibility
         proj = scaffold.new_project(ws, "good", "2026-01-01")
@@ -861,8 +894,11 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         print("usage: lint.py --selftest  OR  lint.py [workspace_root]", file=sys.stderr)
         sys.exit(2)
-    if len(sys.argv) > 2:
-        print("usage: lint.py --selftest  OR  lint.py [workspace_root]", file=sys.stderr)
-        sys.exit(2)
-    root = sys.argv[1] if len(sys.argv) > 1 else "."
-    sys.exit(Lint(root).run())
+    import argparse
+    parser = argparse.ArgumentParser(usage="lint.py [--through P0|P3|P4 | --final] [workspace_root]")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--through", choices=["P0", "P3", "P4"])
+    modes.add_argument("--final", action="store_true", help="explicit whole-workspace final verdict")
+    parser.add_argument("root", nargs="?", default=".")
+    args = parser.parse_args()
+    sys.exit(Lint(args.root, args.through or "final").run())
