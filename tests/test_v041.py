@@ -99,6 +99,8 @@ class V041Tests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="ldl-v041-")
         self.ws = os.path.join(self.tmp, "ws")
         scaffold.init(self.ws)
+        with open(os.path.join(self.ws, ".ldl-version"), "w", encoding="utf-8") as handle:
+            handle.write("0.4.1\n")
         self.proj = scaffold.new_project(
             self.ws, "decision", "2026-01-01", "pre-engineering-decision")
         for rel, text in {

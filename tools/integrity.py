@@ -33,7 +33,7 @@ def _read(lint, path, code):
     return lint.read_text(path, code) if os.path.isfile(path) else ""
 
 
-def check(lint, proj):
+def check(lint, proj, through="final"):
     contract_path = os.path.join(proj, "00_CONTRACT.md")
     contract = _read(lint, contract_path, "L8")
     workspace_v3 = os.path.isfile(os.path.join(lint.root, ".ldl-version"))
@@ -100,7 +100,26 @@ def check(lint, proj):
             lint.err("L8", f"{lint.rel(progress_path)}: gate approval mode does not match contract - {name}")
         if verdict != "PASS":
             target = lint.local_link_target(proj, row["Evidence"])
-            if lint.schema_version() == "0.4.1" and verdict in {"HOLD", "FAIL"}:
+            current_schema = lint.schema_version() in {"0.4.1", "0.4.2"}
+            if current_schema and verdict == "PENDING" and target:
+                if not target.endswith(".json") or not _inside(target, os.path.join(proj, "raw")) or not os.path.isfile(target):
+                    lint.err("L8", f"{lint.rel(progress_path)}: {name} reopen decision must be immutable under project raw/")
+                else:
+                    try:
+                        decision = json.loads(_read(lint, target, "L8"))
+                        import workflow
+                        workflow.validate_gate_decision(proj, decision)
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} reopen decision invalid - {exc}")
+                    else:
+                        expected = {
+                            "gate": name, "contract_version": version, "verdict": "REOPEN",
+                            "approval_mode": approval_mode, "approver": row["Approver"],
+                            "decided_at": row["Approved at"],
+                        }
+                        if any(decision[field] != value for field, value in expected.items()):
+                            lint.err("L8", f"{lint.rel(progress_path)}: {name} reopen decision does not match gate row")
+            if current_schema and verdict in {"HOLD", "FAIL"}:
                 if not target or not target.endswith(".json"):
                     lint.err("L8", f"{lint.rel(progress_path)}: {name} {verdict} requires typed decision evidence")
                 elif not _inside(target, os.path.join(proj, "raw")):
@@ -156,7 +175,7 @@ def check(lint, proj):
                 lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence must be immutable under project raw/")
             else:
                 approval_text = _read(lint, target, "L8")
-                if target.endswith(".json") and lint.schema_version() == "0.4.1":
+                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2"}:
                     try:
                         decision = json.loads(approval_text)
                         import workflow
@@ -207,8 +226,26 @@ def check(lint, proj):
         if not re.search(rf"^GATE-PASS:\s*{gate}\s+contract={re.escape(version)}\s*$", gate_log, re.M):
             lint.err("L8", f"{lint.rel(log_path)}: {gate} PASS missing append-only gate event for contract {version}")
 
+    future_phase_done = any(phase_status.get(name) == "done" for name in (
+        "P1 requirements", "P2 structure", "P3 research", "P4 scoping", "P5+P6 increments"))
+    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2"} and not future_phase_done:
+        future_tables = (
+            ("01_REQUIREMENTS.md", "Requirements ledger", REQUIREMENTS_LEDGER_COLUMNS),
+            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2"} else EVIDENCE_COLUMNS),
+            ("04_SCOPE.md", "Impact dimensions", DIMENSION_COLUMNS),
+            ("04_SCOPE.md", "Action readiness", ACTION_COLUMNS),
+            ("06_VERIFICATION.md", "Requirement verdicts", REQUIREMENT_COLUMNS),
+        )
+        for filename, title, columns in future_tables:
+            path = os.path.join(proj, filename)
+            rows = lint.table_rows(_read(lint, path, "L8"), title, columns, "L8", lint.rel(path))
+            if rows:
+                lint.err("L8", f"{lint.rel(path)}: future phase content present during P0 - {title}")
+    if through == "P0":
+        return
+
     evidence_path = os.path.join(proj, "03_EVIDENCE.md")
-    if lint.schema_version() == "0.4.1":
+    if lint.schema_version() in {"0.4.1", "0.4.2"}:
         raw_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS_V041, "L9", lint.rel(evidence_path))
         evidence_rows = []
         for row in raw_rows:
@@ -260,61 +297,62 @@ def check(lint, proj):
     if gates.get("G2", {}).get("Verdict") == "PASS" and not evidence_rows:
         lint.err("L9", f"{lint.rel(progress_path)}: G2 PASS requires at least one evidence row")
 
-    scope_path = os.path.join(proj, "04_SCOPE.md")
-    scope = _read(lint, scope_path, "L10")
-    dimensions = lint.table_rows(scope, "Impact dimensions", DIMENSION_COLUMNS, "L10", lint.rel(scope_path))
-    dimension_ids = [row["Dimension ID"] for row in dimensions]
-    if len(dimension_ids) != len(set(dimension_ids)):
-        lint.err("L10", f"{lint.rel(scope_path)}: duplicate Dimension ID")
-    dimension_status = {row["Dimension ID"]: row["Status"] for row in dimensions}
-    for dim, status in dimension_status.items():
-        if status not in {"PASS", "HOLD", "FAIL", "NOT_RUN"}:
-            lint.err("L10", f"{lint.rel(scope_path)}: invalid impact status - {dim} {status}")
-    for row in dimensions:
-        target = lint.local_link_target(proj, row["Evidence"])
-        if not lint.substantive_cell(row["Dimension ID"]) or not target or target.startswith(("http://", "https://", "mailto:")) or not os.path.isfile(target):
-            lint.err("L10", f"{lint.rel(scope_path)}: impact dimension {row['Dimension ID']} missing evidence")
-    actions = lint.table_rows(scope, "Action readiness", ACTION_COLUMNS, "L10", lint.rel(scope_path))
-    action_ids = [row["Action ID"] for row in actions]
-    if len(action_ids) != len(set(action_ids)):
-        lint.err("L10", f"{lint.rel(scope_path)}: duplicate Action ID")
-    for row in actions:
-        if not lint.substantive_cell(row["Action ID"]):
-            lint.err("L10", f"{lint.rel(scope_path)}: action missing substantive Action ID")
-        if row["Approval tier"] not in {"0", "1", "2"}:
-            lint.err("L10", f"{lint.rel(scope_path)}: invalid approval tier - {row['Action ID']} {row['Approval tier']}")
-        if row["Ready"] not in {"YES", "NO"}:
-            lint.err("L10", f"{lint.rel(scope_path)}: invalid Ready verdict - {row['Action ID']}")
-        impacted = [item.strip() for item in row["Impact dimensions"].split(",") if item.strip()]
-        if row["Ready"] == "YES" and not impacted:
-            lint.err("L10", f"{lint.rel(scope_path)}: ready action {row['Action ID']} has no impact dimensions")
-        for dim in impacted:
-            status = dimension_status.get(dim)
-            if status is None:
-                lint.err("L10", f"{lint.rel(scope_path)}: action {row['Action ID']} references unknown impact dimension {dim}")
-            elif row["Ready"] == "YES" and status != "PASS":
-                lint.err("L10", f"{lint.rel(scope_path)}: action {row['Action ID']} is ready while impact dimension {dim} is {status}")
-        if row["Ready"] == "YES" and row["Approval tier"] in {"1", "2"}:
-            target = lint.local_link_target(proj, row["Approval evidence"])
-            raw_root = os.path.realpath(os.path.join(proj, "raw"))
-            if (not target or target.startswith(("http://", "https://", "mailto:"))
-                    or not os.path.isfile(target)
-                    or os.path.commonpath([raw_root, os.path.realpath(target)]) != raw_root):
-                lint.err("L10", f"{lint.rel(scope_path)}: ready action {row['Action ID']} missing approval evidence")
-        if row["Ready"] == "YES" and any(not lint.substantive_cell(row[field]) for field in ("Preconditions", "Canary", "Rollback")):
-            lint.err("L10", f"{lint.rel(scope_path)}: ready action {row['Action ID']} missing precondition/canary/rollback")
-    if gates.get("G3", {}).get("Verdict") == "PASS" and (not dimensions or not actions):
-        lint.err("L10", f"{lint.rel(progress_path)}: G3 PASS requires impact dimensions and action readiness rows")
+    if through in {"P4", "final"}:
+        scope_path = os.path.join(proj, "04_SCOPE.md")
+        scope = _read(lint, scope_path, "L10")
+        dimensions = lint.table_rows(scope, "Impact dimensions", DIMENSION_COLUMNS, "L10", lint.rel(scope_path))
+        dimension_ids = [row["Dimension ID"] for row in dimensions]
+        if len(dimension_ids) != len(set(dimension_ids)):
+            lint.err("L10", f"{lint.rel(scope_path)}: duplicate Dimension ID")
+        dimension_status = {row["Dimension ID"]: row["Status"] for row in dimensions}
+        for dim, status in dimension_status.items():
+            if status not in {"PASS", "HOLD", "FAIL", "NOT_RUN"}:
+                lint.err("L10", f"{lint.rel(scope_path)}: invalid impact status - {dim} {status}")
+        for row in dimensions:
+            target = lint.local_link_target(proj, row["Evidence"])
+            if not lint.substantive_cell(row["Dimension ID"]) or not target or target.startswith(("http://", "https://", "mailto:")) or not os.path.isfile(target):
+                lint.err("L10", f"{lint.rel(scope_path)}: impact dimension {row['Dimension ID']} missing evidence")
+        actions = lint.table_rows(scope, "Action readiness", ACTION_COLUMNS, "L10", lint.rel(scope_path))
+        action_ids = [row["Action ID"] for row in actions]
+        if len(action_ids) != len(set(action_ids)):
+            lint.err("L10", f"{lint.rel(scope_path)}: duplicate Action ID")
+        for row in actions:
+            if not lint.substantive_cell(row["Action ID"]):
+                lint.err("L10", f"{lint.rel(scope_path)}: action missing substantive Action ID")
+            if row["Approval tier"] not in {"0", "1", "2"}:
+                lint.err("L10", f"{lint.rel(scope_path)}: invalid approval tier - {row['Action ID']} {row['Approval tier']}")
+            if row["Ready"] not in {"YES", "NO"}:
+                lint.err("L10", f"{lint.rel(scope_path)}: invalid Ready verdict - {row['Action ID']}")
+            impacted = [item.strip() for item in row["Impact dimensions"].split(",") if item.strip()]
+            if row["Ready"] == "YES" and not impacted:
+                lint.err("L10", f"{lint.rel(scope_path)}: ready action {row['Action ID']} has no impact dimensions")
+            for dim in impacted:
+                status = dimension_status.get(dim)
+                if status is None:
+                    lint.err("L10", f"{lint.rel(scope_path)}: action {row['Action ID']} references unknown impact dimension {dim}")
+                elif row["Ready"] == "YES" and status != "PASS":
+                    lint.err("L10", f"{lint.rel(scope_path)}: action {row['Action ID']} is ready while impact dimension {dim} is {status}")
+            if row["Ready"] == "YES" and row["Approval tier"] in {"1", "2"}:
+                target = lint.local_link_target(proj, row["Approval evidence"])
+                raw_root = os.path.realpath(os.path.join(proj, "raw"))
+                if (not target or target.startswith(("http://", "https://", "mailto:"))
+                        or not os.path.isfile(target)
+                        or os.path.commonpath([raw_root, os.path.realpath(target)]) != raw_root):
+                    lint.err("L10", f"{lint.rel(scope_path)}: ready action {row['Action ID']} missing approval evidence")
+            if row["Ready"] == "YES" and any(not lint.substantive_cell(row[field]) for field in ("Preconditions", "Canary", "Rollback")):
+                lint.err("L10", f"{lint.rel(scope_path)}: ready action {row['Action ID']} missing precondition/canary/rollback")
+        if gates.get("G3", {}).get("Verdict") == "PASS" and (not dimensions or not actions):
+            lint.err("L10", f"{lint.rel(progress_path)}: G3 PASS requires impact dimensions and action readiness rows")
 
-    if quantitative == "yes":
-        model = lint.section_text(scope, "Quantitative model")
-        if not model:
-            lint.err("L9", f"{lint.rel(scope_path)}: quantitative project missing Quantitative model")
-        else:
-            fields = ("Baseline window", "Baseline unit", "Candidate window", "Candidate unit", "Assumptions", "Formula/reproducer", "Reconciliation")
-            for field in fields:
-                if not lint.substantive_cell(lint.scalar_field(model, field)):
-                    lint.err("L9", f"{lint.rel(scope_path)}: Quantitative model field missing - {field}")
+        if quantitative == "yes":
+            model = lint.section_text(scope, "Quantitative model")
+            if not model:
+                lint.err("L9", f"{lint.rel(scope_path)}: quantitative project missing Quantitative model")
+            else:
+                fields = ("Baseline window", "Baseline unit", "Candidate window", "Candidate unit", "Assumptions", "Formula/reproducer", "Reconciliation")
+                for field in fields:
+                    if not lint.substantive_cell(lint.scalar_field(model, field)):
+                        lint.err("L9", f"{lint.rel(scope_path)}: Quantitative model field missing - {field}")
 
     requirements_path = os.path.join(proj, "01_REQUIREMENTS.md")
     requirement_definitions = lint.table_rows(_read(lint, requirements_path, "L11"), "Requirements ledger",
@@ -345,6 +383,8 @@ def check(lint, proj):
         lint.err("L11", f"{lint.rel(verification_path)}: duplicate Requirement ID verdict")
     if set(verified_ids) != set(defined_ids):
         lint.err("L11", f"{lint.rel(verification_path)}: requirement verdict IDs do not exactly match requirements ledger")
+    if through in {"P3", "P4"}:
+        return
     finals = lint.section_text(report, "Final verdicts")
     harness = lint.scalar_field(finals, "Harness")
     product = lint.scalar_field(finals, "Product")

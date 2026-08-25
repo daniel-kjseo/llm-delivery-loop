@@ -411,7 +411,7 @@ def verify_experiment_evidence(path, project_root, experiment_id, metric):
     return errors, os.path.realpath(target) if not target_error else ""
 
 
-def check(lint, proj):
+def check(lint, proj, through="final"):
     """L12 — v0.4 Ship-First release, feedback, economy, and MVP invariants."""
     contract_path = os.path.join(proj, "00_CONTRACT.md")
     progress_path = os.path.join(proj, "PROGRESS.md")
@@ -489,6 +489,8 @@ def check(lint, proj):
                 lint.err("L12", f"{crel}: Token/call ledger {ledger_path_error}")
 
     if delivery_mode == "pre-engineering-decision":
+        return
+    if through != "final":
         return
 
     experiment_rows = lint.table_rows(progress, "Experiment ledger", EXPERIMENT_COLUMNS, "L12", prel)

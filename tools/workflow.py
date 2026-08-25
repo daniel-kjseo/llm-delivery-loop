@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LDL v0.4.1 deterministic workflow operations (stdlib only).
+"""LDL v0.4.2 deterministic workflow operations (stdlib only).
 
 Commands:
   workflow.py scratch-init TARGET SCRATCH
@@ -8,6 +8,7 @@ Commands:
   workflow.py sync-verdicts PROJECT
   workflow.py gate-validate PROJECT DECISION.json
   workflow.py gate-apply PROJECT DECISION.json
+  workflow.py gate-reopen PROJECT REVISED_CONTRACT DECISION.json
 """
 import argparse
 import csv
@@ -30,6 +31,14 @@ GATE_PHASES = {
     "G2": ("P1 requirements", "P2 structure", "P3 research"),
     "G3": ("P4 scoping",),
     "G4": ("P5+P6 increments",),
+}
+STAGE_RANK = {"P0": 0, "P3": 3, "P4": 4, "final": 6}
+PHASE_OWNED_FILES = {
+    "01_REQUIREMENTS.md": "P3",
+    "CLAUDE.md": "P3",
+    "03_EVIDENCE.md": "P3",
+    "06_VERIFICATION.md": "P3",
+    "04_SCOPE.md": "P4",
 }
 GATE_COLUMNS = ["Gate", "Verdict", "Contract version", "Approval mode", "Approver", "Approved at", "Evidence"]
 REQ_COLUMNS = ["Requirement ID", "Type", "Priority", "Requirement", "Verification", "Source"]
@@ -97,7 +106,23 @@ def inside_raw(rel):
 
 def is_append_log(rel):
     parts = rel.split(os.sep)
-    return parts[-1] == "log.md" and "logs" in parts
+    return "logs" in parts and parts[-1] in {"log.md", "cost-ledger.csv"}
+
+
+def is_root_tool(rel):
+    parts = rel.split(os.sep)
+    return len(parts) > 1 and parts[0] == "tools"
+
+
+def is_control_plane(rel):
+    return rel.split(os.sep)[-1] == "PROGRESS.md"
+
+
+def required_stage(rel):
+    parts = rel.split(os.sep)
+    if "05_engineering" in parts:
+        return "final"
+    return PHASE_OWNED_FILES.get(parts[-1], "P0")
 
 
 def scratch_init(target, scratch):
@@ -119,8 +144,8 @@ def scratch_init(target, scratch):
     print(f"SCRATCH INIT PASS - files={len(baseline['files'])} scratch={scratch}")
 
 
-def run_scratch_lint(scratch, through):
-    lint = os.path.join(scratch, "tools", "lint.py")
+def run_scratch_lint(target, scratch, through):
+    lint = os.path.join(target, "tools", "lint.py")
     command = [sys.executable, lint]
     if through != "final":
         command += ["--through", through]
@@ -148,6 +173,17 @@ def promote(scratch, target, through):
     missing = sorted(set(expected) - set(candidate))
     if missing:
         raise SystemExit("scratch deleted existing files; promotion refused: " + ", ".join(missing[:20]))
+    changed = [rel for rel in sorted(candidate) if expected.get(rel) != candidate.get(rel)]
+    tool_changes = [rel for rel in changed if is_root_tool(rel)]
+    if tool_changes:
+        raise SystemExit("scratch changed protected tool; promotion refused: " + ", ".join(tool_changes[:20]))
+    control_changes = [rel for rel in changed if is_control_plane(rel)]
+    if control_changes:
+        raise SystemExit("scratch changed protected control plane; promotion refused: " + ", ".join(control_changes[:20]))
+    premature = [rel for rel in changed if STAGE_RANK[required_stage(rel)] > STAGE_RANK[through]]
+    if premature:
+        needed = required_stage(premature[0])
+        raise SystemExit(f"scratch changed future phase file; {premature[0]} requires {needed}")
     for rel in expected:
         if inside_raw(rel) and candidate[rel]["sha256"] != expected[rel]["sha256"]:
             raise SystemExit(f"scratch mutated existing raw file; promotion refused: {rel}")
@@ -157,9 +193,9 @@ def promote(scratch, target, through):
             with open(os.path.join(scratch, rel), "rb") as handle:
                 proposed = handle.read()
             if not proposed.startswith(original):
-                raise SystemExit(f"scratch rewrote append-only log; promotion refused: {rel}")
-    run_scratch_lint(scratch, through)
-    changed = [rel for rel in sorted(candidate) if expected.get(rel) != candidate.get(rel)]
+                kind = "ledger" if rel.endswith("cost-ledger.csv") else "log"
+                raise SystemExit(f"scratch rewrote append-only {kind}; promotion refused: {rel}")
+    run_scratch_lint(target, scratch, through)
     staged = []
     backups = {}
     replaced = []
@@ -282,6 +318,12 @@ def valid_timestamp(value):
     return parsed <= datetime.now(timezone.utc)
 
 
+def version_tuple(value):
+    if not re.fullmatch(r"v\d+(?:\.\d+)*", str(value)):
+        return ()
+    return tuple(int(part) for part in value[1:].split("."))
+
+
 def project_file(project, rel):
     project = os.path.realpath(project)
     if not isinstance(rel, str) or not rel or os.path.isabs(rel):
@@ -292,7 +334,7 @@ def project_file(project, rel):
     return target
 
 
-def validate_gate_decision(project, decision):
+def validate_gate_decision(project, decision, verify_evidence=True, contract_candidate=None):
     required = {"schema", "gate", "contract_version", "verdict", "approval_mode", "approver", "decided_at", "reason", "evidence"}
     if not isinstance(decision, dict) or set(decision) != required:
         raise ValueError("gate decision keys must exactly match the v1 schema")
@@ -300,7 +342,7 @@ def validate_gate_decision(project, decision):
         raise ValueError("gate decision schema/gate invalid")
     if not re.fullmatch(r"v\d+(?:\.\d+)*", str(decision["contract_version"])):
         raise ValueError("gate decision contract_version invalid")
-    if decision["verdict"] not in {"PASS", "HOLD", "FAIL"}:
+    if decision["verdict"] not in {"PASS", "HOLD", "FAIL", "REOPEN"}:
         raise ValueError("gate decision verdict invalid")
     if decision["approval_mode"] not in {"human", "delegated-agent"}:
         raise ValueError("gate decision approval_mode invalid")
@@ -313,20 +355,43 @@ def validate_gate_decision(project, decision):
     for index, item in enumerate(decision["evidence"]):
         if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
             raise ValueError(f"gate decision evidence {index} must be path+sha256")
-        target = project_file(project, item["path"])
-        if not re.fullmatch(r"[0-9a-f]{64}", str(item["sha256"])) or sha256(target) != item["sha256"]:
-            raise ValueError(f"gate decision evidence hash mismatch: {item['path']}")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(item["sha256"])):
+            raise ValueError(f"gate decision evidence hash invalid: {item['path']}")
+        if verify_evidence:
+            target = contract_candidate if item["path"] == "00_CONTRACT.md" and contract_candidate else project_file(project, item["path"])
+            if sha256(target) != item["sha256"]:
+                raise ValueError(f"gate decision evidence hash mismatch: {item['path']}")
+    if decision["verdict"] == "REOPEN":
+        paths = [item["path"] for item in decision["evidence"]]
+        if len(paths) != 2 or paths.count("00_CONTRACT.md") != 1:
+            raise ValueError("REOPEN requires exactly new contract and prior FAIL decision evidence")
+        prior_rel = next(path for path in paths if path != "00_CONTRACT.md")
+        prior_path = project_file(project, prior_rel)
+        raw_root = os.path.realpath(os.path.join(project, "raw"))
+        if (not prior_rel.endswith(".json")
+                or os.path.commonpath([raw_root, os.path.realpath(prior_path)]) != raw_root):
+            raise ValueError("REOPEN prior FAIL decision must be immutable under project raw/")
+        try:
+            with open(prior_path, encoding="utf-8") as handle:
+                prior = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"REOPEN prior FAIL decision unreadable: {exc}")
+        if (not isinstance(prior, dict) or prior.get("verdict") != "FAIL"
+                or prior.get("gate") != decision["gate"]
+                or version_tuple(prior.get("contract_version", "")) >= version_tuple(decision["contract_version"])):
+            raise ValueError("REOPEN prior decision must be lower-version FAIL for the same gate")
+        validate_gate_decision(project, prior, verify_evidence=bool(contract_candidate))
     return True
 
 
-def load_decision(project, decision_path):
+def load_decision(project, decision_path, contract_candidate=None):
     try:
         with open(decision_path, encoding="utf-8") as handle:
             decision = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"gate decision unreadable: {exc}")
     try:
-        validate_gate_decision(project, decision)
+        validate_gate_decision(project, decision, contract_candidate=contract_candidate)
     except ValueError as exc:
         raise SystemExit(f"GATE DECISION FAIL - {exc}")
     return decision
@@ -337,16 +402,60 @@ def gate_validate(project, decision_path):
     print(f"GATE DECISION PASS - gate={decision['gate']} verdict={decision['verdict']} contract={decision['contract_version']}")
 
 
-def gate_apply(project, decision_path):
+def workspace_root(project):
+    current = os.path.realpath(project)
+    while True:
+        if os.path.isfile(os.path.join(current, ".ldl-version")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            raise SystemExit("project is not inside an LDL workspace")
+        current = parent
+
+
+def validate_reopen_poststate(project, revised_contract, raw_rel, payload, progress, log):
+    root = workspace_root(project)
+    parent = tempfile.mkdtemp(prefix="ldl-reopen-poststate-")
+    proposed = os.path.join(parent, "workspace")
+    try:
+        shutil.copytree(root, proposed, ignore=shutil.ignore_patterns(*SKIP_DIRS))
+        proposed_project = os.path.join(proposed, os.path.relpath(project, root))
+        with open(revised_contract, "rb") as handle:
+            atomic_write(os.path.join(proposed_project, "00_CONTRACT.md"), handle.read(), binary=True)
+        atomic_write(os.path.join(proposed_project, raw_rel), payload, exclusive=True)
+        atomic_write(os.path.join(proposed_project, "PROGRESS.md"), progress)
+        atomic_write(os.path.join(proposed_project, "logs", "log.md"), log)
+        run_scratch_lint(root, proposed, "P0")
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+def gate_apply(project, decision_path, revised_contract=None):
     project = os.path.realpath(project)
-    decision = load_decision(project, decision_path)
+    if not revised_contract:
+        try:
+            with open(decision_path, encoding="utf-8") as handle:
+                unvalidated = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            unvalidated = {}
+        if isinstance(unvalidated, dict) and unvalidated.get("verdict") == "REOPEN":
+            raise SystemExit("REOPEN requires gate-reopen with a revised contract file")
+    if revised_contract:
+        revised_contract = os.path.realpath(revised_contract)
+        if not os.path.isfile(revised_contract):
+            raise SystemExit("revised contract file missing")
+    decision = load_decision(project, decision_path, revised_contract)
+    reopening = decision["verdict"] == "REOPEN"
+    if revised_contract and not reopening:
+        raise SystemExit("revised contract file is valid only for REOPEN")
     progress_path = os.path.join(project, "PROGRESS.md")
     log_path = os.path.join(project, "logs", "log.md")
+    contract_path = os.path.join(project, "00_CONTRACT.md")
     with open(progress_path, encoding="utf-8") as handle:
         progress = handle.read()
     with open(log_path, encoding="utf-8") as handle:
         log = handle.read()
-    with open(os.path.join(project, "00_CONTRACT.md"), encoding="utf-8") as handle:
+    with open(revised_contract or contract_path, encoding="utf-8") as handle:
         contract = handle.read()
     version_match = re.search(r"^-\s*Contract version:\s*(\S+)\s*$", contract, re.M)
     mode_match = re.search(r"^-\s*Approval mode:\s*(\S+)\s*$", contract, re.M)
@@ -372,13 +481,50 @@ def gate_apply(project, decision_path):
     gate_match, gate_rows = markdown_table(progress, "Gate ledger", GATE_COLUMNS)
     rows = []
     found = False
+    if reopening:
+        failed_row = next((row for row in gate_rows if row["Gate"] == decision["gate"]), None)
+        if not failed_row or failed_row["Verdict"] != "FAIL":
+            state = failed_row["Verdict"] if failed_row else "missing"
+            raise SystemExit(f"gate REOPEN requires FAIL state, got {state}")
+        if version_tuple(decision["contract_version"]) <= version_tuple(failed_row["Contract version"]):
+            raise SystemExit("gate REOPEN requires a higher contract version")
+        match = re.search(r"\]\(([^)]+)\)", failed_row["Evidence"])
+        prior_rel = match.group(1) if match else ""
+        evidence_paths = {item["path"] for item in decision["evidence"]}
+        if "00_CONTRACT.md" not in evidence_paths or not prior_rel or prior_rel not in evidence_paths:
+            raise SystemExit("gate REOPEN requires new contract and prior FAIL decision evidence")
+        try:
+            with open(project_file(project, prior_rel), encoding="utf-8") as handle:
+                prior = json.load(handle)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise SystemExit(f"gate REOPEN prior FAIL decision invalid: {exc}")
+        expected_prior = {
+            "gate": failed_row["Gate"], "contract_version": failed_row["Contract version"],
+            "verdict": "FAIL", "approval_mode": failed_row["Approval mode"],
+            "approver": failed_row["Approver"], "decided_at": failed_row["Approved at"],
+        }
+        if any(prior.get(field) != value for field, value in expected_prior.items()):
+            raise SystemExit("gate REOPEN prior FAIL decision does not match failed gate row")
     for row in gate_rows:
+        if reopening:
+            row = dict(row)
+            row.update({
+                "Verdict": "PENDING",
+                "Contract version": decision["contract_version"],
+                "Approval mode": decision["approval_mode"],
+                "Approver": decision["approver"] if row["Gate"] == decision["gate"] else "",
+                "Approved at": decision["decided_at"] if row["Gate"] == decision["gate"] else "",
+                "Evidence": f"[decision]({raw_rel})" if row["Gate"] == decision["gate"] else "",
+            })
+            found = found or row["Gate"] == decision["gate"]
+            rows.append(row)
+            continue
         if row["Gate"] == decision["gate"]:
             if row["Verdict"] not in {"PENDING", "HOLD"}:
                 raise SystemExit(f"gate is not applicable from state {row['Verdict']}")
             row = dict(row)
             row.update({
-                "Verdict": decision["verdict"],
+                "Verdict": "PENDING" if reopening else decision["verdict"],
                 "Contract version": decision["contract_version"],
                 "Approval mode": decision["approval_mode"],
                 "Approver": decision["approver"],
@@ -406,14 +552,21 @@ def gate_apply(project, decision_path):
         raise SystemExit("duplicate gate event refused")
     log += event + "\n"
     payload = json.dumps(decision, indent=2, ensure_ascii=False) + "\n"
+    if reopening and revised_contract:
+        validate_reopen_poststate(project, revised_contract, raw_rel, payload, progress, log)
     with open(progress_path, "rb") as handle:
         original_progress = handle.read()
     with open(log_path, "rb") as handle:
         original_log = handle.read()
+    with open(contract_path, "rb") as handle:
+        original_contract = handle.read()
     raw_created = False
     try:
         atomic_write(raw_path, payload, exclusive=True)
         raw_created = True
+        if reopening and revised_contract:
+            with open(revised_contract, "rb") as handle:
+                atomic_write(contract_path, handle.read(), binary=True)
         atomic_write(progress_path, progress)
         atomic_write(log_path, log)
     except Exception:
@@ -421,8 +574,13 @@ def gate_apply(project, decision_path):
             os.unlink(raw_path)
         atomic_write(progress_path, original_progress, binary=True)
         atomic_write(log_path, original_log, binary=True)
+        atomic_write(contract_path, original_contract, binary=True)
         raise
     print(f"GATE APPLY PASS - gate={decision['gate']} verdict={decision['verdict']} artifact={raw_rel}")
+
+
+def gate_reopen(project, revised_contract, decision_path):
+    gate_apply(project, decision_path, revised_contract)
 
 
 def main():
@@ -434,13 +592,15 @@ def main():
     p = sub.add_parser("sync-verdicts"); p.add_argument("project")
     p = sub.add_parser("gate-validate"); p.add_argument("project"); p.add_argument("decision")
     p = sub.add_parser("gate-apply"); p.add_argument("project"); p.add_argument("decision")
+    p = sub.add_parser("gate-reopen"); p.add_argument("project"); p.add_argument("revised_contract"); p.add_argument("decision")
     args = parser.parse_args()
     if args.command == "scratch-init": scratch_init(args.target, args.scratch)
     elif args.command == "promote": promote(args.scratch, args.target, args.through)
     elif args.command == "raw-put": raw_put(args.project, args.relative_path, args.source_file)
     elif args.command == "sync-verdicts": sync_verdicts(args.project)
     elif args.command == "gate-validate": gate_validate(args.project, args.decision)
-    else: gate_apply(args.project, args.decision)
+    elif args.command == "gate-apply": gate_apply(args.project, args.decision)
+    else: gate_reopen(args.project, args.revised_contract, args.decision)
 
 
 if __name__ == "__main__":

@@ -29,3 +29,5 @@ jobs:
         run: python tests/test_v040.py
       - name: v0.4.1 safe pre-engineering scenarios
         run: python tests/test_v041.py
+      - name: v0.4.2 independent promotion scenarios
+        run: python tests/test_v042.py

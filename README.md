@@ -7,7 +7,7 @@
 > **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
 > Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
 
-**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
+**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the v0.4.2 Independent Promotion Boundary · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
 
 **If you are looking for** an AI agent workflow that survives real projects, a way to stop re-explaining context to your agent every session, contract-first prompting, human-in-the-loop quality gates, or a second brain that agents actually maintain — that is what LDL is for.
 
@@ -88,12 +88,36 @@ The first v0.4 field evaluation stopped a weak user-problem claim, but also expo
 7. **P1→P6 IDs synchronize deterministically.** `workflow.py sync-verdicts PROJECT` adds missing requirement verdict rows as `NOT_RUN`, preserves existing rows, and rejects missing/duplicate/invalid IDs.
 8. **Gate decisions are typed.** `workflow.py gate-validate` and `gate-apply` verify an `ldl-gate-decision-v1` JSON manifest, content-addressed evidence, gate/version/mode/timestamp, phase/prior-gate preconditions, create-only raw preservation, the Gate ledger, and the append-only event. Legacy Markdown approvals remain readable for v0.3/v0.4.
 
+## v0.4.2 — Independent Promotion Boundary
+
+An adversarial review proved that a v0.4.1 maker could replace the scratch-side lint with `exit(0)`, promote an invalid contract, and permanently install the disabled checker. It also found phase false-greens, a rewritable cost ledger, and no typed recovery from Gate FAIL. v0.4.2 closes those classes.
+
+1. **The checker is outside the maker boundary.** Promotion always executes `TARGET/tools/lint.py` against the scratch root. The scratch copy never grades itself.
+2. **Installed tools are immutable during maker promotion.** Any added or changed root `tools/**` file refuses promotion. Tool upgrades use explicit scaffold migration, never the maker scratch.
+3. **Phase ownership is native.** Validators receive the requested phase before entering a check block. P0 rejects populated future-phase ledgers; P3 skips Scope checks; P4 skips final Experiment/Increment/Release checks. The old global error-code whitelist is a compatibility no-op.
+4. **Promotion enforces phase and control-plane ownership.** P0 cannot change P1/P3/P4/final documents; P3 cannot change Scope or engineering outputs; P4 cannot change engineering outputs. `PROGRESS.md` never moves through maker promotion—typed workflow operations own Gate and phase state.
+5. **Cost telemetry is append-only twice.** Promotion and persistent lint-state both preserve the byte prefix of `logs/**/cost-ledger.csv`, just like event logs. Corrections are new rows, not history rewrites.
+6. **Gate FAIL is contract-version terminal, not project terminal.** A typed `REOPEN` decision may move FAIL to PENDING only on a higher contract version. Its two hashed inputs are exactly the new `00_CONTRACT.md` and the prior immutable typed FAIL decision; the validator parses that prior decision and reconciles it with the failed Gate row before resetting the full Gate ledger.
+
+REOPEN is one atomic control-plane operation—the revised contract never bypasses promotion by being edited in place:
+
+```bash
+python3 tools/workflow.py gate-reopen \
+  projects/YYYY-MM-DD_name \
+  /tmp/00_CONTRACT-v2.md \
+  /tmp/gate-reopen-v2.json
+```
+
+The command validates the candidate contract and both hashes, then writes the revised contract, immutable REOPEN artifact, Gate ledger reset, and append-only event together. Any intermediate failure restores all four targets.
+
 The default safe sequence is:
 
 ```bash
 python3 tools/workflow.py scratch-init . /tmp/my-ldl-run
 # run the maker only inside /tmp/my-ldl-run
-python3 /tmp/my-ldl-run/tools/lint.py --through P0 /tmp/my-ldl-run
+# optional preflight; the target-owned checker inspects scratch
+python3 tools/lint.py --through P0 /tmp/my-ldl-run
+# promotion repeats the same target-owned check and refuses tool/future-phase drift
 python3 tools/workflow.py promote /tmp/my-ldl-run . --through P0
 ```
 

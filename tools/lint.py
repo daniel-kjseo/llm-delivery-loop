@@ -265,9 +265,9 @@ class Lint:
             self.check_contract(full)
             self.check_integrity_model(full)
             marker_value = self.schema_version()
-            if marker_value in {"0.4.0", "0.4.1"}:
+            if marker_value in {"0.4.0", "0.4.1", "0.4.2"}:
                 import lean
-                lean.check(self, full)
+                lean.check(self, full, self.through)
 
     def check_contract(self, proj):
         c = os.path.join(proj, "00_CONTRACT.md")
@@ -278,7 +278,7 @@ class Lint:
         text = self.read_text(c, "L4")
         if text is None:
             return
-        if self.schema_version() == "0.4.1" and os.path.getsize(c) > 8192:
+        if self.schema_version() in {"0.4.1", "0.4.2"} and os.path.getsize(c) > 8192:
             self.err("L4", f"{rel}: contract exceeds 8192 bytes - {os.path.getsize(c)}")
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
@@ -360,7 +360,7 @@ class Lint:
         # Kept in a small module so the v0.3 schema can evolve without turning
         # the original reference lint into one giant parser.
         import integrity
-        integrity.check(self, proj)
+        integrity.check(self, proj, self.through)
 
     # -- L5 + L6 ----------------------------------------------------------
     def check_state(self):
@@ -387,7 +387,7 @@ class Lint:
         if os.path.isfile(marker):
             marker_value = self.read_text(marker, "L7")
             marker_value = marker_value.strip() if marker_value is not None else None
-            if marker_value not in {"0.3.0", "0.4.0", "0.4.1"}:
+            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2"}:
                 self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
         if state.get("schema") and marker_value is None:
             self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
@@ -395,7 +395,9 @@ class Lint:
             prior_schema = state.get("schema")
             if prior_schema in {None, marker_value}:
                 state["schema"] = marker_value
-            elif (prior_schema, marker_value) in {("0.3.0", "0.4.0"), ("0.3.0", "0.4.1"), ("0.4.0", "0.4.1")}:
+            elif (prior_schema, marker_value) in {
+                    ("0.3.0", "0.4.0"), ("0.3.0", "0.4.1"), ("0.3.0", "0.4.2"),
+                    ("0.4.0", "0.4.1"), ("0.4.0", "0.4.2"), ("0.4.1", "0.4.2")}:
                 state["schema"] = marker_value
             else:
                 self.err("L7", f"lint schema {prior_schema} does not match marker {marker_value}")
@@ -442,7 +444,8 @@ class Lint:
         for r, dirs, files in os.walk(self.root):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for f in files:
-                if f != "log.md" or os.path.basename(r) != "logs" and "logs" not in self.rel(os.path.join(r, f)).split(os.sep):
+                parts = self.rel(os.path.join(r, f)).split(os.sep)
+                if "logs" not in parts or f not in {"log.md", "cost-ledger.csv"}:
                     continue
                 p = os.path.join(r, f)
                 key = self.rel(p)
@@ -478,33 +481,12 @@ class Lint:
 
     # -- run --------------------------------------------------------------
     def filter_stage_errors(self):
-        if self.through == "final":
-            return
-        kept = []
-        for error in self.errors:
-            match = re.match(r"^\[(L\d+)\]", error)
-            code = match.group(1) if match else ""
-            if self.through == "P0":
-                if code in {"L9", "L10", "L11"}:
-                    if "00_CONTRACT.md" not in error:
-                        continue
-                if code == "L12" and "00_CONTRACT.md" not in error:
-                    continue
-            elif self.through == "P3":
-                if code == "L10" and "00_CONTRACT.md" not in error:
-                    continue
-                if code == "L9" and "04_SCOPE.md" in error:
-                    continue
-                if code == "L12" and "00_CONTRACT.md" not in error:
-                    continue
-            kept.append(error)
-        self.errors = kept
+        """Compatibility no-op: phase ownership is enforced before each validator block."""
 
     def run(self):
         self.check_links()
         self.check_projects()
         self.check_installation()
-        self.filter_stage_errors()
         self.check_state()
         if self.errors:
             print(f"LINT FAIL - {len(self.errors)} issue(s)")
