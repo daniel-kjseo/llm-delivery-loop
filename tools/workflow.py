@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LDL v0.4.2 deterministic workflow operations (stdlib only).
+"""LDL v0.5.0 deterministic workflow operations (stdlib only).
 
 Commands:
   workflow.py scratch-init TARGET SCRATCH
@@ -9,6 +9,7 @@ Commands:
   workflow.py gate-validate PROJECT DECISION.json
   workflow.py gate-apply PROJECT DECISION.json
   workflow.py gate-reopen PROJECT REVISED_CONTRACT DECISION.json
+  workflow.py prompt-log PROJECT SESSION SOURCE_FILE [--actor human|agent]
 """
 import argparse
 import csv
@@ -34,11 +35,17 @@ GATE_PHASES = {
 }
 STAGE_RANK = {"P0": 0, "P3": 3, "P4": 4, "final": 6}
 PHASE_OWNED_FILES = {
+    "02_EVALUATION.json": "P0",
     "01_REQUIREMENTS.md": "P3",
     "CLAUDE.md": "P3",
     "03_EVIDENCE.md": "P3",
+    "03_PORTFOLIO.json": "P3",
     "06_VERIFICATION.md": "P3",
     "04_SCOPE.md": "P4",
+    "04_PREFLIGHT.json": "P4",
+    "06_CAPABILITIES.json": "final",
+    "06_JUDGE_SCORES.json": "final",
+    "06_SUBMISSION.json": "final",
 }
 GATE_COLUMNS = ["Gate", "Verdict", "Contract version", "Approval mode", "Approver", "Approved at", "Evidence"]
 REQ_COLUMNS = ["Requirement ID", "Type", "Priority", "Requirement", "Verification", "Source"]
@@ -106,7 +113,8 @@ def inside_raw(rel):
 
 def is_append_log(rel):
     parts = rel.split(os.sep)
-    return "logs" in parts and parts[-1] in {"log.md", "cost-ledger.csv"}
+    return "logs" in parts and parts[-1] in {
+        "log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv"}
 
 
 def is_root_tool(rel):
@@ -123,6 +131,24 @@ def required_stage(rel):
     if "05_engineering" in parts:
         return "final"
     return PHASE_OWNED_FILES.get(parts[-1], "P0")
+
+
+def evaluation_frozen(target, rel):
+    if rel.split(os.sep)[-1] != "02_EVALUATION.json":
+        return False
+    parts = rel.split(os.sep)
+    if "projects" in parts:
+        index = parts.index("projects")
+        project = os.path.join(target, *parts[:index + 2])
+    else:
+        project = target
+    progress = os.path.join(project, "PROGRESS.md")
+    if not os.path.isfile(progress):
+        return False
+    with open(progress, encoding="utf-8") as handle:
+        text = handle.read()
+    match = re.search(r"^\|\s*G1\s*\|\s*([^|]+)\|", text, re.M)
+    return bool(match and match.group(1).strip() != "PENDING")
 
 
 def scratch_init(target, scratch):
@@ -180,6 +206,9 @@ def promote(scratch, target, through):
     control_changes = [rel for rel in changed if is_control_plane(rel)]
     if control_changes:
         raise SystemExit("scratch changed protected control plane; promotion refused: " + ", ".join(control_changes[:20]))
+    frozen_evaluators = [rel for rel in changed if evaluation_frozen(target, rel)]
+    if frozen_evaluators:
+        raise SystemExit("scratch changed G1-frozen evaluator profile; promotion refused: " + ", ".join(frozen_evaluators[:20]))
     premature = [rel for rel in changed if STAGE_RANK[required_stage(rel)] > STAGE_RANK[through]]
     if premature:
         needed = required_stage(premature[0])
@@ -256,6 +285,46 @@ def raw_put(project, rel, source):
         data = handle.read()
     atomic_write(target, data, binary=True, exclusive=True)
     print(f"RAW PUT PASS - path={os.path.relpath(target, project)} bytes={len(data)} sha256={sha256(target)}")
+
+
+SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
+    re.compile(r"\b(?:API[_-]?KEY|TOKEN|PASSWORD|SECRET)\s*[:=]\s*[^\s]{8,}", re.I),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{16,}", re.I),
+)
+
+
+def prompt_log(project, session, source, actor="human", timestamp=None):
+    project = os.path.realpath(project)
+    if actor not in {"human", "agent"}:
+        raise SystemExit("prompt actor must be human or agent")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(session)):
+        raise SystemExit("prompt session must be a bounded visible identifier")
+    if not os.path.isfile(source):
+        raise SystemExit("prompt source file missing")
+    with open(source, encoding="utf-8") as handle:
+        prompt = handle.read()
+    if not prompt.strip():
+        raise SystemExit("prompt source is empty")
+    if any(pattern.search(prompt) for pattern in SECRET_PATTERNS):
+        raise SystemExit("prompt contains a secret-like value; nothing was logged")
+    timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not valid_timestamp(timestamp):
+        raise SystemExit("prompt timestamp invalid or in the future")
+    record = {
+        "schema": "ldl-prompt-log-v1", "timestamp": timestamp, "session": session,
+        "actor": actor, "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "prompt": prompt,
+    }
+    target = os.path.join(project, "logs", "prompts.jsonl")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    print(f"PROMPT LOG PASS - session={session} actor={actor} bytes={len(prompt.encode('utf-8'))}")
 
 
 def markdown_table(text, title, columns):
@@ -593,6 +662,7 @@ def main():
     p = sub.add_parser("gate-validate"); p.add_argument("project"); p.add_argument("decision")
     p = sub.add_parser("gate-apply"); p.add_argument("project"); p.add_argument("decision")
     p = sub.add_parser("gate-reopen"); p.add_argument("project"); p.add_argument("revised_contract"); p.add_argument("decision")
+    p = sub.add_parser("prompt-log"); p.add_argument("project"); p.add_argument("session"); p.add_argument("source_file"); p.add_argument("--actor", choices=["human", "agent"], default="human")
     args = parser.parse_args()
     if args.command == "scratch-init": scratch_init(args.target, args.scratch)
     elif args.command == "promote": promote(args.scratch, args.target, args.through)
@@ -600,7 +670,8 @@ def main():
     elif args.command == "sync-verdicts": sync_verdicts(args.project)
     elif args.command == "gate-validate": gate_validate(args.project, args.decision)
     elif args.command == "gate-apply": gate_apply(args.project, args.decision)
-    else: gate_reopen(args.project, args.revised_contract, args.decision)
+    elif args.command == "gate-reopen": gate_reopen(args.project, args.revised_contract, args.decision)
+    else: prompt_log(args.project, args.session, args.source_file, args.actor)
 
 
 if __name__ == "__main__":

@@ -431,7 +431,7 @@ def check(lint, proj, through="final"):
         lint.err("L12", f"{crel}: Delivery profile missing")
     else:
         delivery_mode = lint.scalar_field(delivery, "Delivery mode")
-        if delivery_mode not in {"startup-reversible", "gated-high-risk", "pre-engineering-decision"}:
+        if delivery_mode not in {"startup-reversible", "gated-high-risk", "pre-engineering-decision", "portfolio-competition"}:
             lint.err("L12", f"{crel}: invalid Delivery mode")
         if delivery_mode == "pre-engineering-decision":
             if lint.scalar_field(delivery, "Decision endpoint") != "G3":
@@ -457,7 +457,7 @@ def check(lint, proj, through="final"):
             if not lint.substantive_cell(lint.scalar_field(launch, field)):
                 lint.err("L12", f"{crel}: Launch brief field missing - {field}")
         risk = lint.scalar_field(launch, "Risk")
-        expected_risk = "low-reversible" if delivery_mode == "startup-reversible" else "high-risk"
+        expected_risk = "low-reversible" if delivery_mode in {"startup-reversible", "portfolio-competition"} else "high-risk"
         if delivery_mode and risk != expected_risk:
             lint.err("L12", f"{crel}: Launch brief Risk must be {expected_risk}")
     if not economy:
@@ -612,7 +612,7 @@ def check(lint, proj, through="final"):
             lint.err("L12", f"{prel}: release PASS Released at must be UTC ISO-8601")
         elif utc_datetime(row["Released at"]) > datetime.now(timezone.utc):
             lint.err("L12", f"{prel}: release PASS Released at cannot be in the future")
-        expected_risk = "low-reversible" if delivery_mode == "startup-reversible" else "high-risk"
+        expected_risk = "low-reversible" if delivery_mode in {"startup-reversible", "portfolio-competition"} else "high-risk"
         if row["Risk"] != expected_risk:
             lint.err("L12", f"{prel}: release risk does not match delivery mode")
         if delivery_mode == "gated-high-risk" and gates.get("G4", {}).get("Verdict") != "PASS":

@@ -28,7 +28,8 @@ Checks
                        has a separated non-code judge; the contract cites
                        at least one interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
-  L6 log append-only   logs/**/log.md may only grow; rewritten history fails
+  L6 log append-only   event, cost, prompt, and intervention ledgers may only grow;
+                       prompt JSONL also validates schema/hash/secret hygiene
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
   L7 installation      workspace/shared-protocol template sentinels are gone
   L8 gate integrity    v0.3 gate ledger vocabulary, approval evidence,
@@ -42,6 +43,7 @@ State for L5/L6 lives in logs/.lint-state.json (created on first run).
                        proof, packet/cost telemetry completion boundary
 """
 import hashlib, json, os, re, stat, sys
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 
 LINK = re.compile(r"\]\(([^)]+)\)")
@@ -265,7 +267,7 @@ class Lint:
             self.check_contract(full)
             self.check_integrity_model(full)
             marker_value = self.schema_version()
-            if marker_value in {"0.4.0", "0.4.1", "0.4.2"}:
+            if marker_value in {"0.4.0", "0.4.1", "0.4.2", "0.5.0"}:
                 import lean
                 lean.check(self, full, self.through)
 
@@ -278,7 +280,7 @@ class Lint:
         text = self.read_text(c, "L4")
         if text is None:
             return
-        if self.schema_version() in {"0.4.1", "0.4.2"} and os.path.getsize(c) > 8192:
+        if self.schema_version() in {"0.4.1", "0.4.2", "0.5.0"} and os.path.getsize(c) > 8192:
             self.err("L4", f"{rel}: contract exceeds 8192 bytes - {os.path.getsize(c)}")
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
@@ -387,7 +389,7 @@ class Lint:
         if os.path.isfile(marker):
             marker_value = self.read_text(marker, "L7")
             marker_value = marker_value.strip() if marker_value is not None else None
-            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2"}:
+            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0"}:
                 self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
         if state.get("schema") and marker_value is None:
             self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
@@ -397,7 +399,8 @@ class Lint:
                 state["schema"] = marker_value
             elif (prior_schema, marker_value) in {
                     ("0.3.0", "0.4.0"), ("0.3.0", "0.4.1"), ("0.3.0", "0.4.2"),
-                    ("0.4.0", "0.4.1"), ("0.4.0", "0.4.2"), ("0.4.1", "0.4.2")}:
+                    ("0.4.0", "0.4.1"), ("0.4.0", "0.4.2"),
+                    ("0.4.1", "0.4.2"), ("0.4.2", "0.5.0")}:
                 state["schema"] = marker_value
             else:
                 self.err("L7", f"lint schema {prior_schema} does not match marker {marker_value}")
@@ -445,7 +448,7 @@ class Lint:
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for f in files:
                 parts = self.rel(os.path.join(r, f)).split(os.sep)
-                if "logs" not in parts or f not in {"log.md", "cost-ledger.csv"}:
+                if "logs" not in parts or f not in {"log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv"}:
                     continue
                 p = os.path.join(r, f)
                 key = self.rel(p)
@@ -455,6 +458,42 @@ class Lint:
                 except OSError:
                     self.err("L6", f"log unreadable: {key}")
                     continue
+                if f == "prompts.jsonl":
+                    secret_patterns = (
+                        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+                        re.compile(r"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{20,}\b"),
+                        re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+                        re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+                        re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
+                        re.compile(r"\b(?:API[_-]?KEY|TOKEN|PASSWORD|SECRET)\s*[:=]\s*[^\s]{8,}", re.I),
+                        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{16,}", re.I),
+                    )
+                    for number, raw_line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+                        try:
+                            record = json.loads(raw_line)
+                        except json.JSONDecodeError:
+                            self.err("L6", f"prompt log malformed JSON at {key}:{number}")
+                            continue
+                        required = {"schema", "timestamp", "session", "actor", "prompt_sha256", "prompt"}
+                        if not isinstance(record, dict) or set(record) != required or record.get("schema") != "ldl-prompt-log-v1":
+                            self.err("L6", f"prompt log schema invalid at {key}:{number}")
+                            continue
+                        prompt = record.get("prompt")
+                        if (not isinstance(prompt, str)
+                                or hashlib.sha256(prompt.encode("utf-8")).hexdigest() != record.get("prompt_sha256")):
+                            self.err("L6", f"prompt log content hash mismatch at {key}:{number}")
+                        if any(pattern.search(prompt or "") for pattern in secret_patterns):
+                            self.err("L6", f"prompt log contains secret-like value at {key}:{number}")
+                        if record.get("actor") not in {"human", "agent"}:
+                            self.err("L6", f"prompt log actor invalid at {key}:{number}")
+                        if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(record.get("session", ""))):
+                            self.err("L6", f"prompt log session invalid at {key}:{number}")
+                        try:
+                            stamp = datetime.strptime(record.get("timestamp", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                            if stamp > datetime.now(timezone.utc):
+                                raise ValueError("future")
+                        except (TypeError, ValueError):
+                            self.err("L6", f"prompt log timestamp invalid at {key}:{number}")
                 prev = state["logs"].get(key)
                 if prev:
                     if len(data) < prev["len"] or hashlib.sha256(data[: prev["len"]]).hexdigest() != prev["sha"]:

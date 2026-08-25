@@ -7,7 +7,7 @@
 > **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
 > Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
 
-**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the v0.4.2 Independent Promotion Boundary · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
+**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the v0.4.2 Independent Promotion Boundary · the v0.5.0 Evaluator-First Portfolio Loop · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
 
 **If you are looking for** an AI agent workflow that survives real projects, a way to stop re-explaining context to your agent every session, contract-first prompting, human-in-the-loop quality gates, or a second brain that agents actually maintain — that is what LDL is for.
 
@@ -119,6 +119,34 @@ python3 tools/workflow.py scratch-init . /tmp/my-ldl-run
 python3 tools/lint.py --through P0 /tmp/my-ldl-run
 # promotion repeats the same target-owned check and refuses tool/future-phase drift
 python3 tools/workflow.py promote /tmp/my-ldl-run . --through P0
+```
+
+## v0.5.0 — Evaluator-First Portfolio Loop
+
+v0.5.0 adds an optional breadth-first profile for competitive or ambiguous work. It does not force every bug fix to invent alternatives. Use `scaffold.py new NAME --profile portfolio-competition` when several problem candidates must be compared before agents build.
+
+1. **Contract the evaluation environment.** `02_EVALUATION.json` separates deterministic checkers, AI structural/practitioner simulators, declared human reviewers, and agent consumers. Every evaluator declares its journey, blind inputs, unjudgeable dimensions, disqualification rules, and a 100-point rubric; bounded iteration limits apply globally. A human result requires a distinct `ldl-human-review-v1` manifest bound to contract, evaluator, approver, non-future UTC time, and the exact reviewed subject. This is structural attestation, not cryptographic identity authentication.
+2. **Select from a comparable portfolio.** `03_PORTFOLIO.json` requires at least three candidates only in this profile, one selected winner, explicit rejection/reopen conditions, unique IDs, and candidate-specific immutable evidence. Evidence copied between candidates does not become independent support.
+3. **Preflight before build.** `04_PREFLIGHT.json` binds each dependency to a separated runner, executed-at time, expected/actual exit code, nonzero check count, and immutable probe evidence. Boolean zero, self-labeled PASS, failed dependencies, and nonzero blockers do not open P4/final.
+4. **Prove promises, not prose.** `06_CAPABILITIES.json` gives every promise a required evidence level and observed status from `NOT_IMPLEMENTED | BOUNDED_FALLBACK | CAPTURED_REAL | LIVE_VERIFIED`. An observed level below the promised level fails final validation.
+5. **Treat scores as simulations.** `06_JUDGE_SCORES.json` binds evaluator-profile SHA, exact accepted subject hash, blocking defects, unjudgeable dimensions, and immutable evidence. A rising internal score is not an external outcome and cannot target an unrelated hash.
+6. **Gate submission separately.** `06_SUBMISSION.json` reconciles required/included files, secret scan, link check, original-log integrity, archive structure, and evidence after packaging.
+7. **Keep project-local prompt history.** Every new project has append-only `logs/prompts.jsonl` and `logs/intervention-ledger.csv`. Record prompts from a file so secrets do not enter shell arguments:
+
+```bash
+python3 tools/workflow.py prompt-log PROJECT SESSION prompt.txt --actor human
+```
+
+The command rejects common key/token/password/private-key shapes before append, records UTC/session/actor/content SHA-256, and never rewrites prior entries. Target-owned lint independently validates JSONL schema, content hashes, secret canaries, and byte-prefix continuity. This is tamper evidence against the constrained scratch maker—not external notarization against an operator who can rewrite the target and its lint state. Secret prevention happens before logging; if a credential enters an immutable original log, rotate it and record failure—redaction does not repair provenance.
+
+Evaluator and downstream typed artifacts bind the active contract version. Judge rounds bind the exact evaluator-profile SHA. Once G1 is no longer PENDING, ordinary maker promotion cannot change `02_EVALUATION.json`; a revised evaluator requires a new contract version and typed REOPEN.
+
+8. **Keep checkpoints monotonic.** In v0.5 portfolio projects, requesting P0 after portfolio/preflight/final state exists is refused as checkpoint regression; use the current or later `--through` stage.
+
+Explicit migration from v0.4.2 is limited to empty workspaces:
+
+```bash
+python3 tools/scaffold.py init WORKSPACE --migrate-v050
 ```
 
 ## Phase 0 — Goal setting (the contract)
@@ -335,10 +363,10 @@ Then the global constitution (first-time users): if there is no user-level globa
            ├── CLAUDE.md          # project constitution (Phase 2 — scope constraint, project-specific rules)
            ├── PROGRESS.md        # progress — the review hub
            ├── raw/               # this project's sources + the interview record (immutable)
-           └── logs/              # log.md + cost-ledger.csv + sessions/
+           └── logs/              # log.md + cost-ledger.csv + prompts.jsonl + intervention ledger + sessions/
    ```
 
-   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), and [`tools/workflow.py`](tools/workflow.py). `scaffold.py init` creates a new v0.4.1 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. A marked v0.3 workspace upgrades to v0.4.0 only with `--migrate-v04`; an empty v0.4.0 workspace upgrades only with `--migrate-v041`. Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint or `--profile gated-high-risk` for the full risk path. A rewrite must keep the same verdicts: `lint.py --selftest`, `tests/test_v030.py`, `tests/test_v040.py`, and `tests/test_v041.py` cover legacy, evidence/safety, Ship-First, and safe pre-engineering boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
+   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), and [`tools/workflow.py`](tools/workflow.py). `scaffold.py init` creates a new v0.5.0 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. Migration is sequential and explicit: v0.3 → v0.4.0 with `--migrate-v04`, empty v0.4.0 → v0.4.1 with `--migrate-v041`, empty v0.4.1 → v0.4.2 with `--migrate-v042`, and empty v0.4.2 → v0.5.0 with `--migrate-v050`. Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint, `--profile gated-high-risk` for the full risk path, or `--profile portfolio-competition` for the v0.5 evaluator-first portfolio path. A rewrite must keep the same verdicts: `lint.py --selftest` plus `tests/test_v030.py`, `tests/test_v040.py`, `tests/test_v041.py`, `tests/test_v042.py`, and `tests/test_v050.py` cover legacy, evidence/safety, Ship-First, safe pre-engineering, independent promotion, and evaluator-first portfolio boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
 
    The scaffolder pre-creates every numbered document as a headed skeleton — an empty `03_EVIDENCE.md` in a fresh project is a to-do, not litter, and link-closure still applies to it: every phase document is reachable from the project's `PROGRESS.md`.
 

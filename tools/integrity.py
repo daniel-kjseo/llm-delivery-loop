@@ -3,6 +3,7 @@
 This module intentionally checks structural invariants only. Whether evidence is
 true or a recommendation is good remains a separated semantic judgment.
 """
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,283 @@ PHASE_COLUMNS = ["Phase", "Status", "Date", "Deliverable"]
 EVIDENCE_DOMAINS = {"SUPPLY", "DEMAND", "BEHAVIOR", "CAUSAL", "LEGAL", "OPERATIONAL"}
 
 
+def _json(lint, path, code):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        lint.err(code, f"{lint.rel(path)}: typed artifact unreadable - {exc}")
+        return None
+
+
+def _artifact(lint, proj, value, code, label):
+    if not isinstance(value, dict) or set(value) != {"path", "sha256"}:
+        lint.err(code, f"{lint.rel(proj)}: {label} must be path+sha256")
+        return None
+    rel, expected = value.get("path"), value.get("sha256")
+    parts = rel.split("/") if isinstance(rel, str) else []
+    if (not isinstance(rel, str) or os.path.isabs(rel) or not rel or rel.startswith(".")
+            or any(part in {"", ".", ".."} for part in parts)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(expected))):
+        lint.err(code, f"{lint.rel(proj)}: {label} path/hash invalid")
+        return None
+    lexical = os.path.abspath(os.path.join(proj, rel))
+    target = os.path.realpath(os.path.join(proj, rel))
+    raw = os.path.realpath(os.path.join(proj, "raw"))
+    if (not _inside(lexical, os.path.join(proj, "raw")) or not _inside(target, raw)
+            or not os.path.isfile(target) or os.path.islink(lexical)):
+        lint.err(code, f"{lint.rel(proj)}: {label} must resolve under project raw/")
+        return None
+    digest = hashlib.sha256()
+    with open(target, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != expected:
+        lint.err(code, f"{lint.rel(proj)}: {label} hash mismatch")
+        return None
+    return os.path.realpath(target)
+
+
+def check_v050(lint, proj, through):
+    contract = _read(lint, os.path.join(proj, "00_CONTRACT.md"), "L13")
+    delivery = lint.scalar_field(lint.section_text(contract, "Delivery profile"), "Delivery mode")
+    if delivery != "portfolio-competition":
+        return
+    paths = {name: os.path.join(proj, name) for name in (
+        "02_EVALUATION.json", "03_PORTFOLIO.json", "04_PREFLIGHT.json",
+        "06_CAPABILITIES.json", "06_JUDGE_SCORES.json", "06_SUBMISSION.json")}
+    docs = {name: _json(lint, path, "L13") for name, path in paths.items()}
+    if any(value is None for value in docs.values()):
+        return
+    malformed_roots = [name for name, value in docs.items() if not isinstance(value, dict)]
+    if malformed_roots:
+        for name in malformed_roots:
+            lint.err("L13", f"{lint.rel(paths[name])}: typed artifact root must be an object")
+        return
+    contract_version = lint.scalar_field(lint.section_text(contract, "Governance profile"), "Contract version")
+    for name, document in docs.items():
+        if document.get("contract_version") != contract_version:
+            lint.err("L13", f"{lint.rel(paths[name])}: typed artifact contract version does not match active contract")
+
+    portfolio = docs["03_PORTFOLIO.json"]
+    preflight = docs["04_PREFLIGHT.json"]
+    capabilities = docs["06_CAPABILITIES.json"]
+    scores = docs["06_JUDGE_SCORES.json"]
+    submission_state = docs["06_SUBMISSION.json"]
+    floor = "P0"
+    if isinstance(portfolio.get("candidates"), list) and portfolio["candidates"]:
+        floor = "P3"
+    if isinstance(preflight.get("dependencies"), list) and preflight["dependencies"]:
+        floor = "P4"
+    if ((isinstance(capabilities.get("capabilities"), list) and capabilities["capabilities"])
+            or (isinstance(scores.get("rounds"), list) and scores["rounds"])
+            or submission_state.get("secret_scan") != "NOT_RUN"):
+        floor = "final"
+    ranks = {"P0": 0, "P3": 3, "P4": 4, "final": 6}
+    if ranks[through] < ranks[floor]:
+        lint.err("L13", f"{lint.rel(proj)}: requested checkpoint {through} precedes current project state {floor}")
+        return
+
+    env = docs["02_EVALUATION.json"]
+    if set(env) != {"schema", "contract_version", "evaluators", "submission_grammar", "process_trace_required", "secret_policy", "iteration_limits"} or env.get("schema") != "ldl-evaluation-environment-v1":
+        lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluation environment schema invalid")
+    evaluators = env.get("evaluators", [])
+    evaluator_ids = []
+    for item in evaluators if isinstance(evaluators, list) else []:
+        required = {"id", "type", "perspective", "journey", "disqualification_rules", "blind_inputs", "cannot_judge", "rubric"}
+        if not isinstance(item, dict) or set(item) != required:
+            lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluator keys invalid")
+            continue
+        evaluator_ids.append(item["id"])
+        if item["type"] not in {"deterministic", "ai-structural", "ai-practitioner", "actual-human", "agent-consumer"}:
+            lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluator type invalid - {item['id']}")
+        weights = [criterion.get("weight") for criterion in item["rubric"] if isinstance(criterion, dict)]
+        if not item["rubric"] or any(not isinstance(weight, int) or weight < 0 for weight in weights) or sum(weights) != 100:
+            lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluator rubric must total 100 - {item['id']}")
+    if not evaluators or len(evaluator_ids) != len(set(evaluator_ids)):
+        lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluators missing or duplicate")
+    if env.get("secret_policy") != "values-never-enter-logs":
+        lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: secret policy must protect original logs")
+    limits = env.get("iteration_limits", {})
+    if (set(limits) != {"max_rounds", "minimum_delta", "max_wall_seconds"}
+            or not isinstance(limits.get("max_rounds"), int) or not 1 <= limits["max_rounds"] <= 20
+            or not isinstance(limits.get("minimum_delta"), (int, float)) or limits["minimum_delta"] < 0
+            or not isinstance(limits.get("max_wall_seconds"), int) or limits["max_wall_seconds"] <= 0):
+        lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: bounded iteration limits invalid")
+    evaluator_types = {item.get("type") for item in evaluators if isinstance(item, dict)}
+    if not {"actual-human", "agent-consumer"}.issubset(evaluator_types):
+        lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: human taste and agent consumer evaluators required")
+
+    if through == "P0":
+        return
+    if set(portfolio) != {"schema", "contract_version", "selection_status", "candidates"} or portfolio.get("schema") != "ldl-problem-portfolio-v1":
+        lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: portfolio schema invalid")
+        return
+    candidates = portfolio.get("candidates", [])
+    ids, used_evidence, used_hashes, selected = [], set(), set(), 0
+    if not isinstance(candidates, list) or len(candidates) < 3:
+        lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: portfolio requires at least three candidates")
+        candidates = []
+    for candidate in candidates:
+        required = {"id", "problem", "status", "score", "evidence", "rejection_reason", "reopen_conditions"}
+        if not isinstance(candidate, dict) or set(candidate) != required:
+            lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: candidate keys invalid")
+            continue
+        ids.append(candidate["id"])
+        status = candidate["status"]
+        if status not in {"SELECTED", "HOLD", "REJECTED", "REVIVABLE"}:
+            lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: candidate status invalid - {candidate['id']}")
+        selected += status == "SELECTED"
+        if not isinstance(candidate.get("evidence"), list) or not candidate["evidence"]:
+            lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: candidate missing evidence - {candidate['id']}")
+        if status in {"REJECTED", "REVIVABLE"} and not str(candidate["rejection_reason"]).strip():
+            lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: rejected candidate missing reason - {candidate['id']}")
+        for index, evidence in enumerate(candidate["evidence"]):
+            target = _artifact(lint, proj, evidence, "L13", f"candidate {candidate['id']} evidence {index}")
+            if target and target in used_evidence:
+                lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: reuses candidate evidence - {candidate['id']}")
+            digest = evidence.get("sha256") if isinstance(evidence, dict) else None
+            if digest and digest in used_hashes:
+                lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: reuses candidate evidence hash - {candidate['id']}")
+            target and used_evidence.add(target)
+            digest and used_hashes.add(digest)
+    if len(ids) != len(set(ids)):
+        lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: duplicate candidate ID")
+    if portfolio.get("selection_status") == "SELECTED" and selected != 1:
+        lint.err("L13", f"{lint.rel(paths['03_PORTFOLIO.json'])}: SELECTED portfolio requires exactly one winner")
+
+    if through == "P3":
+        early_verification = _read(lint, os.path.join(proj, "06_VERIFICATION.md"), "L13")
+        early_finals = lint.section_text(early_verification, "Final verdicts")
+        for field in ("Human taste", "Agent operability"):
+            if lint.scalar_field(early_finals, field) != "NOT_RUN":
+                lint.err("L13", f"{lint.rel(os.path.join(proj, '06_VERIFICATION.md'))}: premature {field} verdict before final")
+        return
+    if set(preflight) != {"schema", "contract_version", "blockers", "dependencies"} or preflight.get("schema") != "ldl-preflight-manifest-v1":
+        lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: preflight schema invalid")
+    if type(preflight.get("blockers")) is not int or preflight.get("blockers") != 0:
+        lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: preflight blockers must be zero")
+    for dep in preflight.get("dependencies", []):
+        dep_keys = {"id", "status", "probe", "limit", "fallback", "credential_required", "runner_id",
+                    "executed_at", "exit_code", "expected_exit_code", "checks", "evidence"}
+        if not isinstance(dep, dict) or set(dep) != dep_keys:
+            lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency schema invalid")
+            continue
+        if dep.get("status") != "PASS":
+            lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency not PASS - {dep.get('id', 'missing')}")
+        execution_valid = (isinstance(dep.get("checks"), int) and not isinstance(dep.get("checks"), bool) and dep["checks"] > 0
+                           and isinstance(dep.get("exit_code"), int) and not isinstance(dep.get("exit_code"), bool)
+                           and dep.get("exit_code") == dep.get("expected_exit_code")
+                           and bool(str(dep.get("probe", "")).strip()) and bool(str(dep.get("runner_id", "")).strip())
+                           and str(dep.get("runner_id", "")).lower() != "maker")
+        try:
+            executed = datetime.strptime(dep.get("executed_at", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            execution_valid = execution_valid and executed <= datetime.now(timezone.utc)
+        except (TypeError, ValueError):
+            execution_valid = False
+        if not execution_valid:
+            lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency has no valid executed probe - {dep.get('id', 'missing')}")
+        _artifact(lint, proj, dep.get("evidence"), "L13", f"preflight {dep.get('id', 'missing')} evidence")
+
+    if through == "P4":
+        early_verification = _read(lint, os.path.join(proj, "06_VERIFICATION.md"), "L13")
+        early_finals = lint.section_text(early_verification, "Final verdicts")
+        for field in ("Human taste", "Agent operability"):
+            if lint.scalar_field(early_finals, field) != "NOT_RUN":
+                lint.err("L13", f"{lint.rel(os.path.join(proj, '06_VERIFICATION.md'))}: premature {field} verdict before final")
+        return
+    if set(capabilities) != {"schema", "contract_version", "capabilities"} or capabilities.get("schema") != "ldl-capability-proof-v1" or not capabilities.get("capabilities"):
+        lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability proof missing")
+    for cap in capabilities.get("capabilities", []):
+        cap_keys = {"id", "promise", "required_level", "status", "demo_evidence", "live_evidence", "limitations"}
+        if not isinstance(cap, dict) or set(cap) != cap_keys:
+            lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability schema invalid")
+            continue
+        levels = {"NOT_IMPLEMENTED": 0, "BOUNDED_FALLBACK": 1, "CAPTURED_REAL": 2, "LIVE_VERIFIED": 3}
+        if (cap.get("required_level") not in levels or cap.get("status") not in levels
+                or levels[cap["status"]] < levels[cap["required_level"]]):
+            lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: promise is not verified - {cap.get('id', 'missing')}")
+        if not str(cap.get("promise", "")).strip() or not str(cap.get("limitations", "")).strip():
+            lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability promise/limitations missing - {cap.get('id', 'missing')}")
+        _artifact(lint, proj, cap.get("demo_evidence"), "L13", f"capability {cap.get('id', 'missing')} demo evidence")
+        if cap.get("status") == "LIVE_VERIFIED":
+            _artifact(lint, proj, cap.get("live_evidence"), "L13", f"capability {cap.get('id', 'missing')} live evidence")
+    if set(scores) != {"schema", "contract_version", "rounds"} or scores.get("schema") != "ldl-judge-score-v1" or not scores.get("rounds"):
+        lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge rounds missing")
+    evaluator_types_by_id = {item.get("id"): item.get("type") for item in evaluators if isinstance(item, dict)}
+    with open(paths["02_EVALUATION.json"], "rb") as handle:
+        evaluator_sha = hashlib.sha256(handle.read()).hexdigest()
+    accepted_subject_hashes = set()
+    selected_candidates = [candidate for candidate in candidates if candidate.get("status") == "SELECTED"]
+    for candidate in selected_candidates:
+        accepted_subject_hashes.update(item.get("sha256") for item in candidate.get("evidence", []) if isinstance(item, dict))
+    for cap in capabilities.get("capabilities", []):
+        for field in ("demo_evidence", "live_evidence"):
+            if isinstance(cap.get(field), dict):
+                accepted_subject_hashes.add(cap[field].get("sha256"))
+    human_pass = False
+    agent_pass = False
+    for row in scores.get("rounds", []):
+        if row.get("judge_id") not in evaluator_ids:
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: unknown judge - {row.get('judge_id')}")
+        if row.get("judge_type") != evaluator_types_by_id.get(row.get("judge_id")):
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge type does not match evaluator profile")
+        if row.get("judge_sha256") != evaluator_sha:
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: stale or forged evaluator profile hash")
+        if (not re.fullmatch(r"[0-9a-f]{64}", str(row.get("artifact_sha256", "")))
+                or not isinstance(row.get("score"), int) or not 0 <= row["score"] <= 100):
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge score/artifact hash invalid")
+        elif row["artifact_sha256"] not in accepted_subject_hashes:
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge subject hash is not bound to an accepted artifact")
+        if row.get("judge_type") == "actual-human" and "human_evidence" not in row:
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: actual-human judge requires human evidence")
+        elif row.get("judge_type") == "actual-human":
+            human_path = _artifact(lint, proj, row.get("human_evidence"), "L13", f"judge round {row.get('round')} human evidence")
+            if human_path:
+                review = _json(lint, human_path, "L13")
+                required_review = {"schema", "contract_version", "evaluator_id", "approver", "decided_at", "verdict", "subject"}
+                valid_review = isinstance(review, dict) and set(review) == required_review
+                review_obj = review if isinstance(review, dict) else {}
+                valid_review = valid_review and review_obj.get("schema") == "ldl-human-review-v1"
+                valid_review = valid_review and review_obj.get("contract_version") == contract_version
+                valid_review = valid_review and review_obj.get("evaluator_id") == row.get("judge_id")
+                valid_review = valid_review and review_obj.get("verdict") == "PASS" and bool(str(review_obj.get("approver", "")).strip())
+                try:
+                    decided = datetime.strptime(review_obj.get("decided_at", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                    valid_review = valid_review and decided <= datetime.now(timezone.utc)
+                except (TypeError, ValueError):
+                    valid_review = False
+                subject_path = _artifact(lint, proj, review_obj.get("subject"),
+                                         "L13", f"judge round {row.get('round')} human subject")
+                valid_review = valid_review and bool(subject_path) and review_obj.get("subject", {}).get("sha256") == row.get("artifact_sha256")
+                if not valid_review:
+                    lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: typed human review invalid")
+                else:
+                    human_pass = True
+        if row.get("blocking_defects"):
+            lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge round has blocking defects")
+        elif row.get("judge_type") == "agent-consumer":
+            agent_pass = True
+        _artifact(lint, proj, row.get("evidence"), "L13", f"judge round {row.get('round')} evidence")
+    if len(scores.get("rounds", [])) > limits.get("max_rounds", 0) * max(1, len(evaluator_ids)):
+        lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge rounds exceed bounded iteration limit")
+    verification = _read(lint, os.path.join(proj, "06_VERIFICATION.md"), "L13")
+    finals = lint.section_text(verification, "Final verdicts")
+    if lint.scalar_field(finals, "Human taste") != "PASS" or not human_pass:
+        lint.err("L13", f"{lint.rel(os.path.join(proj, '06_VERIFICATION.md'))}: Human taste must PASS")
+    if lint.scalar_field(finals, "Agent operability") != "PASS" or not agent_pass:
+        lint.err("L13", f"{lint.rel(os.path.join(proj, '06_VERIFICATION.md'))}: Agent operability must PASS")
+    submission = docs["06_SUBMISSION.json"]
+    if set(submission) != {"schema", "contract_version", "required_files", "included_files", "excluded_files", "secret_scan", "link_check", "log_integrity", "archive_structure", "evidence"} or submission.get("schema") != "ldl-submission-manifest-v1":
+        lint.err("L13", f"{lint.rel(paths['06_SUBMISSION.json'])}: submission schema invalid")
+    for field in ("secret_scan", "link_check", "log_integrity", "archive_structure"):
+        if submission.get(field) != "PASS":
+            lint.err("L13", f"{lint.rel(paths['06_SUBMISSION.json'])}: {field} must PASS")
+    if sorted(submission.get("required_files", [])) != sorted(submission.get("included_files", [])):
+        lint.err("L13", f"{lint.rel(paths['06_SUBMISSION.json'])}: required/included files differ")
+    _artifact(lint, proj, submission.get("evidence"), "L13", "submission evidence")
+
+
 def _inside(path, boundary):
     try:
         lexical = os.path.commonpath([os.path.abspath(boundary), os.path.abspath(path)]) == os.path.abspath(boundary)
@@ -34,11 +312,16 @@ def _read(lint, path, code):
 
 
 def check(lint, proj, through="final"):
+    if lint.schema_version() == "0.5.0":
+        check_v050(lint, proj, through)
     contract_path = os.path.join(proj, "00_CONTRACT.md")
     contract = _read(lint, contract_path, "L8")
     workspace_v3 = os.path.isfile(os.path.join(lint.root, ".ldl-version"))
     if not contract:
         return
+    delivery_mode = lint.scalar_field(lint.section_text(contract, "Delivery profile"), "Delivery mode")
+    if delivery_mode == "portfolio-competition" and lint.schema_version() != "0.5.0":
+        lint.err("L13", f"{lint.rel(contract_path)}: portfolio-competition requires workspace schema 0.5.0")
     if not lint.section_text(contract, "Governance profile"):
         if workspace_v3:
             lint.err("L8", f"{lint.rel(contract_path)}: v0.3 project missing Governance profile")
@@ -100,7 +383,7 @@ def check(lint, proj, through="final"):
             lint.err("L8", f"{lint.rel(progress_path)}: gate approval mode does not match contract - {name}")
         if verdict != "PASS":
             target = lint.local_link_target(proj, row["Evidence"])
-            current_schema = lint.schema_version() in {"0.4.1", "0.4.2"}
+            current_schema = lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"}
             if current_schema and verdict == "PENDING" and target:
                 if not target.endswith(".json") or not _inside(target, os.path.join(proj, "raw")) or not os.path.isfile(target):
                     lint.err("L8", f"{lint.rel(progress_path)}: {name} reopen decision must be immutable under project raw/")
@@ -175,7 +458,7 @@ def check(lint, proj, through="final"):
                 lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence must be immutable under project raw/")
             else:
                 approval_text = _read(lint, target, "L8")
-                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2"}:
+                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"}:
                     try:
                         decision = json.loads(approval_text)
                         import workflow
@@ -228,10 +511,10 @@ def check(lint, proj, through="final"):
 
     future_phase_done = any(phase_status.get(name) == "done" for name in (
         "P1 requirements", "P2 structure", "P3 research", "P4 scoping", "P5+P6 increments"))
-    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2"} and not future_phase_done:
+    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"} and not future_phase_done:
         future_tables = (
             ("01_REQUIREMENTS.md", "Requirements ledger", REQUIREMENTS_LEDGER_COLUMNS),
-            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2"} else EVIDENCE_COLUMNS),
+            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"} else EVIDENCE_COLUMNS),
             ("04_SCOPE.md", "Impact dimensions", DIMENSION_COLUMNS),
             ("04_SCOPE.md", "Action readiness", ACTION_COLUMNS),
             ("06_VERIFICATION.md", "Requirement verdicts", REQUIREMENT_COLUMNS),
@@ -245,7 +528,7 @@ def check(lint, proj, through="final"):
         return
 
     evidence_path = os.path.join(proj, "03_EVIDENCE.md")
-    if lint.schema_version() in {"0.4.1", "0.4.2"}:
+    if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"}:
         raw_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS_V041, "L9", lint.rel(evidence_path))
         evidence_rows = []
         for row in raw_rows:

@@ -31,3 +31,5 @@ jobs:
         run: python tests/test_v041.py
       - name: v0.4.2 independent promotion scenarios
         run: python tests/test_v042.py
+      - name: v0.5.0 evaluator-first portfolio scenarios
+        run: python tests/test_v050.py
