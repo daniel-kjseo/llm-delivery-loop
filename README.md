@@ -7,7 +7,7 @@
 > **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
 > Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
 
-**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the v0.4.2 Independent Promotion Boundary · the v0.5.0 Evaluator-First Portfolio Loop · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
+**What's inside**: the double loop (inner delivery loop + outer knowledge loop) · seven phases from contract to verification · four evidence-backed approval gates · the v0.3.0 Evidence & Safety Model · the v0.4.0 Ship-First MVP Loop · the v0.4.1 Safe Pre-Engineering Harness · the v0.4.2 Independent Promotion Boundary · the v0.5.0 Evaluator-First Portfolio Loop · the v0.6.0 Enforced Evaluation · the Ingest / Query / Lint protocol for a compounding wiki · a folder tree you can install today.
 
 **If you are looking for** an AI agent workflow that survives real projects, a way to stop re-explaining context to your agent every session, contract-first prompting, human-in-the-loop quality gates, or a second brain that agents actually maintain — that is what LDL is for.
 
@@ -147,6 +147,25 @@ Explicit migration from v0.4.2 is limited to empty workspaces:
 
 ```bash
 python3 tools/scaffold.py init WORKSPACE --migrate-v050
+```
+
+## v0.6.0 — Enforced Evaluation
+
+v0.5.0 built the evaluation layer; v0.6.0 makes it binding. Every rule below closed a scenario that passed lint under v0.5.0 — the maker could still grade its own work through an unfrozen evaluator, an empty check, a self-set bar, a self-reported number, or a judge wearing the maker's name.
+
+1. **The freeze needs a gate to hang on.** `06_SUBMISSION.json` now requires `G1 PASS`. Under v0.5.0 the portfolio profile never required G1, so "the evaluator profile is frozen after G1" never engaged and a rubric could be rewritten at final and re-hashed.
+2. **An empty check is not a passed check.** Empty `dependencies`, `required_files`, `included_files`, `submission_grammar`, and empty evaluator `journey` / `blind_inputs` / `cannot_judge` / `disqualification_rules` now fail. A blind review that declares nothing blind is not a blind review.
+3. **The maker does not set its own bar.** Every capability binds a `requirement_id` that must exist in the `01_REQUIREMENTS.md` ledger, and `required_level` may not fall below `CAPTURED_REAL`. Declaring a grand promise at `NOT_IMPLEMENTED` and passing is closed.
+4. **Numbers come from execution output.** A preflight `checks` count may not exceed the line count of its own evidence, the `exit_code` must appear in that evidence, and a judge `score` must appear in the round's evidence. Content-addressed evidence proved the file existed; it did not prove the number came from it.
+5. **Separation is an identity, not a forbidden word.** Any `runner_id` containing "maker" is refused (`maker-agent` and `maker ` used to pass), and a typed human review's `approver` must match the G1 approver recorded in the gate ledger.
+6. **A verdict for every input.** Malformed nested fields in typed artifacts now produce an `L13` verdict instead of a traceback.
+
+`tests/test_v060.py` carries the hostile fixtures the earlier releases lacked: the empty-set cases, the maker-shaped identities, and one **composed false-green** that violates six rules at once — the shape a single-field negative test cannot catch.
+
+Explicit migration from v0.5.0 is limited to empty workspaces:
+
+```bash
+python3 tools/scaffold.py init WORKSPACE --migrate-v060
 ```
 
 ## Phase 0 — Goal setting (the contract)
@@ -366,7 +385,7 @@ Then the global constitution (first-time users): if there is no user-level globa
            └── logs/              # log.md + cost-ledger.csv + prompts.jsonl + intervention ledger + sessions/
    ```
 
-   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), and [`tools/workflow.py`](tools/workflow.py). `scaffold.py init` creates a new v0.5.0 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. Migration is sequential and explicit: v0.3 → v0.4.0 with `--migrate-v04`, empty v0.4.0 → v0.4.1 with `--migrate-v041`, empty v0.4.1 → v0.4.2 with `--migrate-v042`, and empty v0.4.2 → v0.5.0 with `--migrate-v050`. Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint, `--profile gated-high-risk` for the full risk path, or `--profile portfolio-competition` for the v0.5 evaluator-first portfolio path. A rewrite must keep the same verdicts: `lint.py --selftest` plus `tests/test_v030.py`, `tests/test_v040.py`, `tests/test_v041.py`, `tests/test_v042.py`, and `tests/test_v050.py` cover legacy, evidence/safety, Ship-First, safe pre-engineering, independent promotion, and evaluator-first portfolio boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
+   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), and [`tools/workflow.py`](tools/workflow.py). `scaffold.py init` creates a new v0.6.0 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. Migration is sequential and explicit: v0.3 → v0.4.0 with `--migrate-v04`, empty v0.4.0 → v0.4.1 with `--migrate-v041`, empty v0.4.1 → v0.4.2 with `--migrate-v042`, empty v0.4.2 → v0.5.0 with `--migrate-v050`, and empty v0.5.0 → v0.6.0 with `--migrate-v060`. Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint, `--profile gated-high-risk` for the full risk path, or `--profile portfolio-competition` for the v0.5 evaluator-first portfolio path. A rewrite must keep the same verdicts: `lint.py --selftest` plus `tests/test_v030.py`, `tests/test_v040.py`, `tests/test_v041.py`, `tests/test_v042.py`, `tests/test_v050.py`, and `tests/test_v060.py` cover legacy, evidence/safety, Ship-First, safe pre-engineering, independent promotion, evaluator-first portfolio, and enforced-evaluation boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
 
    The scaffolder pre-creates every numbered document as a headed skeleton — an empty `03_EVIDENCE.md` in a fresh project is a to-do, not litter, and link-closure still applies to it: every phase document is reachable from the project's `PROGRESS.md`.
 

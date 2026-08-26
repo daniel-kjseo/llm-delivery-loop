@@ -267,7 +267,7 @@ class Lint:
             self.check_contract(full)
             self.check_integrity_model(full)
             marker_value = self.schema_version()
-            if marker_value in {"0.4.0", "0.4.1", "0.4.2", "0.5.0"}:
+            if marker_value in {"0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
                 import lean
                 lean.check(self, full, self.through)
 
@@ -280,7 +280,7 @@ class Lint:
         text = self.read_text(c, "L4")
         if text is None:
             return
-        if self.schema_version() in {"0.4.1", "0.4.2", "0.5.0"} and os.path.getsize(c) > 8192:
+        if self.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"} and os.path.getsize(c) > 8192:
             self.err("L4", f"{rel}: contract exceeds 8192 bytes - {os.path.getsize(c)}")
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
@@ -389,7 +389,7 @@ class Lint:
         if os.path.isfile(marker):
             marker_value = self.read_text(marker, "L7")
             marker_value = marker_value.strip() if marker_value is not None else None
-            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0"}:
+            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
                 self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
         if state.get("schema") and marker_value is None:
             self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
@@ -400,7 +400,7 @@ class Lint:
             elif (prior_schema, marker_value) in {
                     ("0.3.0", "0.4.0"), ("0.3.0", "0.4.1"), ("0.3.0", "0.4.2"),
                     ("0.4.0", "0.4.1"), ("0.4.0", "0.4.2"),
-                    ("0.4.1", "0.4.2"), ("0.4.2", "0.5.0")}:
+                    ("0.4.1", "0.4.2"), ("0.4.2", "0.5.0"), ("0.5.0", "0.6.0")}:
                 state["schema"] = marker_value
             else:
                 self.err("L7", f"lint schema {prior_schema} does not match marker {marker_value}")

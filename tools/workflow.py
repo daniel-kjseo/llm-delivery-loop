@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LDL v0.5.0 deterministic workflow operations (stdlib only).
+"""LDL v0.6.0 deterministic workflow operations (stdlib only).
 
 Commands:
   workflow.py scratch-init TARGET SCRATCH

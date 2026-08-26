@@ -33,3 +33,5 @@ jobs:
         run: python tests/test_v042.py
       - name: v0.5.0 evaluator-first portfolio scenarios
         run: python tests/test_v050.py
+      - name: v0.6.0 enforced evaluation scenarios
+        run: python tests/test_v060.py

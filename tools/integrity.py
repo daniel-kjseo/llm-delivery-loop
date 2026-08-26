@@ -58,6 +58,46 @@ def _artifact(lint, proj, value, code, label):
     return os.path.realpath(target)
 
 
+def _nonempty(lint, value, code, message):
+    """An empty collection is an unmade check, not a passed one."""
+    if not isinstance(value, list) or not value:
+        lint.err(code, message)
+        return False
+    return True
+
+
+def _text_of(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _states(number, text):
+    """The number must appear in the evidence as a standalone token."""
+    return re.search(r"(?<!\d)" + re.escape(str(number)) + r"(?!\d)", text) is not None
+
+
+def _maker_shaped(name):
+    return "maker" in str(name).strip().lower()
+
+
+def _g1(lint, proj):
+    text = _read(lint, os.path.join(proj, "PROGRESS.md"), "L13") or ""
+    match = re.search(r"^\|\s*G1\s*\|([^\n]*)$", text, re.M)
+    if not match:
+        return {"Verdict": "", "Approver": ""}
+    cells = [cell.strip() for cell in match.group(1).split("|")]
+    return {"Verdict": cells[0] if cells else "",
+            "Approver": cells[3] if len(cells) > 3 else ""}
+
+
+def _requirement_ids(lint, proj):
+    text = _read(lint, os.path.join(proj, "01_REQUIREMENTS.md"), "L13") or ""
+    return set(re.findall(r"^\|\s*(R-[0-9]+)\s*\|", text, re.M))
+
+
 def check_v050(lint, proj, through):
     contract = _read(lint, os.path.join(proj, "00_CONTRACT.md"), "L13")
     delivery = lint.scalar_field(lint.section_text(contract, "Delivery profile"), "Delivery mode")
@@ -98,6 +138,7 @@ def check_v050(lint, proj, through):
         lint.err("L13", f"{lint.rel(proj)}: requested checkpoint {through} precedes current project state {floor}")
         return
 
+    gate_one = _g1(lint, proj)
     env = docs["02_EVALUATION.json"]
     if set(env) != {"schema", "contract_version", "evaluators", "submission_grammar", "process_trace_required", "secret_policy", "iteration_limits"} or env.get("schema") != "ldl-evaluation-environment-v1":
         lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluation environment schema invalid")
@@ -111,11 +152,19 @@ def check_v050(lint, proj, through):
         evaluator_ids.append(item["id"])
         if item["type"] not in {"deterministic", "ai-structural", "ai-practitioner", "actual-human", "agent-consumer"}:
             lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluator type invalid - {item['id']}")
+        for field, phrase in (("journey", "has no journey"),
+                              ("blind_inputs", "blind inputs are empty"),
+                              ("cannot_judge", "declares nothing it cannot judge"),
+                              ("disqualification_rules", "has no disqualification rule")):
+            _nonempty(lint, item.get(field), "L13",
+                      f"{lint.rel(paths['02_EVALUATION.json'])}: evaluator {phrase} - {item['id']}")
         weights = [criterion.get("weight") for criterion in item["rubric"] if isinstance(criterion, dict)]
         if not item["rubric"] or any(not isinstance(weight, int) or weight < 0 for weight in weights) or sum(weights) != 100:
             lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluator rubric must total 100 - {item['id']}")
     if not evaluators or len(evaluator_ids) != len(set(evaluator_ids)):
         lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: evaluators missing or duplicate")
+    _nonempty(lint, env.get("submission_grammar"), "L13",
+              f"{lint.rel(paths['02_EVALUATION.json'])}: submission grammar is empty")
     if env.get("secret_policy") != "values-never-enter-logs":
         lint.err("L13", f"{lint.rel(paths['02_EVALUATION.json'])}: secret policy must protect original logs")
     limits = env.get("iteration_limits", {})
@@ -177,6 +226,8 @@ def check_v050(lint, proj, through):
         lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: preflight schema invalid")
     if type(preflight.get("blockers")) is not int or preflight.get("blockers") != 0:
         lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: preflight blockers must be zero")
+    _nonempty(lint, preflight.get("dependencies"), "L13",
+              f"{lint.rel(paths['04_PREFLIGHT.json'])}: preflight declares no dependency to probe")
     for dep in preflight.get("dependencies", []):
         dep_keys = {"id", "status", "probe", "limit", "fallback", "credential_required", "runner_id",
                     "executed_at", "exit_code", "expected_exit_code", "checks", "evidence"}
@@ -188,8 +239,7 @@ def check_v050(lint, proj, through):
         execution_valid = (isinstance(dep.get("checks"), int) and not isinstance(dep.get("checks"), bool) and dep["checks"] > 0
                            and isinstance(dep.get("exit_code"), int) and not isinstance(dep.get("exit_code"), bool)
                            and dep.get("exit_code") == dep.get("expected_exit_code")
-                           and bool(str(dep.get("probe", "")).strip()) and bool(str(dep.get("runner_id", "")).strip())
-                           and str(dep.get("runner_id", "")).lower() != "maker")
+                           and bool(str(dep.get("probe", "")).strip()) and bool(str(dep.get("runner_id", "")).strip()))
         try:
             executed = datetime.strptime(dep.get("executed_at", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
             execution_valid = execution_valid and executed <= datetime.now(timezone.utc)
@@ -197,7 +247,16 @@ def check_v050(lint, proj, through):
             execution_valid = False
         if not execution_valid:
             lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency has no valid executed probe - {dep.get('id', 'missing')}")
-        _artifact(lint, proj, dep.get("evidence"), "L13", f"preflight {dep.get('id', 'missing')} evidence")
+        if _maker_shaped(dep.get("runner_id")):
+            lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency runner is the maker - {dep.get('id', 'missing')}")
+        probe_path = _artifact(lint, proj, dep.get("evidence"), "L13", f"preflight {dep.get('id', 'missing')} evidence")
+        if probe_path:
+            recorded = _text_of(probe_path)
+            lines = [line for line in recorded.splitlines() if line.strip()]
+            if isinstance(dep.get("checks"), int) and not isinstance(dep.get("checks"), bool) and dep["checks"] > len(lines):
+                lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency check count exceeds its evidence - {dep.get('id', 'missing')}")
+            if isinstance(dep.get("exit_code"), int) and not isinstance(dep.get("exit_code"), bool) and not _states(dep["exit_code"], recorded):
+                lint.err("L13", f"{lint.rel(paths['04_PREFLIGHT.json'])}: dependency exit code is not recorded in its evidence - {dep.get('id', 'missing')}")
 
     if through == "P4":
         early_verification = _read(lint, os.path.join(proj, "06_VERIFICATION.md"), "L13")
@@ -208,8 +267,9 @@ def check_v050(lint, proj, through):
         return
     if set(capabilities) != {"schema", "contract_version", "capabilities"} or capabilities.get("schema") != "ldl-capability-proof-v1" or not capabilities.get("capabilities"):
         lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability proof missing")
+    requirement_ids = _requirement_ids(lint, proj)
     for cap in capabilities.get("capabilities", []):
-        cap_keys = {"id", "promise", "required_level", "status", "demo_evidence", "live_evidence", "limitations"}
+        cap_keys = {"id", "requirement_id", "promise", "required_level", "status", "demo_evidence", "live_evidence", "limitations"}
         if not isinstance(cap, dict) or set(cap) != cap_keys:
             lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability schema invalid")
             continue
@@ -217,6 +277,10 @@ def check_v050(lint, proj, through):
         if (cap.get("required_level") not in levels or cap.get("status") not in levels
                 or levels[cap["status"]] < levels[cap["required_level"]]):
             lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: promise is not verified - {cap.get('id', 'missing')}")
+        elif levels[cap["required_level"]] < levels["CAPTURED_REAL"]:
+            lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability required level below CAPTURED_REAL - {cap.get('id', 'missing')}")
+        if cap.get("requirement_id") not in requirement_ids:
+            lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability requirement ID not in the requirements ledger - {cap.get('id', 'missing')}")
         if not str(cap.get("promise", "")).strip() or not str(cap.get("limitations", "")).strip():
             lint.err("L13", f"{lint.rel(paths['06_CAPABILITIES.json'])}: capability promise/limitations missing - {cap.get('id', 'missing')}")
         _artifact(lint, proj, cap.get("demo_evidence"), "L13", f"capability {cap.get('id', 'missing')} demo evidence")
@@ -262,6 +326,13 @@ def check_v050(lint, proj, through):
                 valid_review = valid_review and review_obj.get("contract_version") == contract_version
                 valid_review = valid_review and review_obj.get("evaluator_id") == row.get("judge_id")
                 valid_review = valid_review and review_obj.get("verdict") == "PASS" and bool(str(review_obj.get("approver", "")).strip())
+                approver = str(review_obj.get("approver", "")).strip()
+                if approver and approver != gate_one["Approver"]:
+                    lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: human review approver does not match the G1 approver - {approver}")
+                    valid_review = False
+                elif _maker_shaped(approver):
+                    lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: human review approver is the maker - {approver}")
+                    valid_review = False
                 try:
                     decided = datetime.strptime(review_obj.get("decided_at", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                     valid_review = valid_review and decided <= datetime.now(timezone.utc)
@@ -278,7 +349,10 @@ def check_v050(lint, proj, through):
             lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge round has blocking defects")
         elif row.get("judge_type") == "agent-consumer":
             agent_pass = True
-        _artifact(lint, proj, row.get("evidence"), "L13", f"judge round {row.get('round')} evidence")
+        card = _artifact(lint, proj, row.get("evidence"), "L13", f"judge round {row.get('round')} evidence")
+        if card and isinstance(row.get("score"), int) and not isinstance(row.get("score"), bool):
+            if not _states(row["score"], _text_of(card)):
+                lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge score is not recorded in its evidence - round {row.get('round')} {row.get('judge_id')}")
     if len(scores.get("rounds", [])) > limits.get("max_rounds", 0) * max(1, len(evaluator_ids)):
         lint.err("L13", f"{lint.rel(paths['06_JUDGE_SCORES.json'])}: judge rounds exceed bounded iteration limit")
     verification = _read(lint, os.path.join(proj, "06_VERIFICATION.md"), "L13")
@@ -287,13 +361,20 @@ def check_v050(lint, proj, through):
         lint.err("L13", f"{lint.rel(os.path.join(proj, '06_VERIFICATION.md'))}: Human taste must PASS")
     if lint.scalar_field(finals, "Agent operability") != "PASS" or not agent_pass:
         lint.err("L13", f"{lint.rel(os.path.join(proj, '06_VERIFICATION.md'))}: Agent operability must PASS")
+    if gate_one["Verdict"] != "PASS":
+        lint.err("L13", f"{lint.rel(os.path.join(proj, 'PROGRESS.md'))}: submission requires G1 PASS - the evaluator profile is never frozen while G1 is {gate_one['Verdict'] or 'missing'}")
     submission = docs["06_SUBMISSION.json"]
     if set(submission) != {"schema", "contract_version", "required_files", "included_files", "excluded_files", "secret_scan", "link_check", "log_integrity", "archive_structure", "evidence"} or submission.get("schema") != "ldl-submission-manifest-v1":
         lint.err("L13", f"{lint.rel(paths['06_SUBMISSION.json'])}: submission schema invalid")
     for field in ("secret_scan", "link_check", "log_integrity", "archive_structure"):
         if submission.get(field) != "PASS":
             lint.err("L13", f"{lint.rel(paths['06_SUBMISSION.json'])}: {field} must PASS")
-    if sorted(submission.get("required_files", [])) != sorted(submission.get("included_files", [])):
+    _nonempty(lint, submission.get("required_files"), "L13",
+              f"{lint.rel(paths['06_SUBMISSION.json'])}: submission declares no required file")
+    _nonempty(lint, submission.get("included_files"), "L13",
+              f"{lint.rel(paths['06_SUBMISSION.json'])}: submission declares no included file")
+    if sorted(submission.get("required_files", []) if isinstance(submission.get("required_files"), list) else []) \
+            != sorted(submission.get("included_files", []) if isinstance(submission.get("included_files"), list) else []):
         lint.err("L13", f"{lint.rel(paths['06_SUBMISSION.json'])}: required/included files differ")
     _artifact(lint, proj, submission.get("evidence"), "L13", "submission evidence")
 
@@ -312,16 +393,19 @@ def _read(lint, path, code):
 
 
 def check(lint, proj, through="final"):
-    if lint.schema_version() == "0.5.0":
-        check_v050(lint, proj, through)
+    if lint.schema_version() in {"0.5.0", "0.6.0"}:
+        try:
+            check_v050(lint, proj, through)
+        except (TypeError, AttributeError, KeyError, IndexError) as exc:
+            lint.err("L13", f"{lint.rel(proj)}: typed artifact field has the wrong shape - {type(exc).__name__}: {exc}")
     contract_path = os.path.join(proj, "00_CONTRACT.md")
     contract = _read(lint, contract_path, "L8")
     workspace_v3 = os.path.isfile(os.path.join(lint.root, ".ldl-version"))
     if not contract:
         return
     delivery_mode = lint.scalar_field(lint.section_text(contract, "Delivery profile"), "Delivery mode")
-    if delivery_mode == "portfolio-competition" and lint.schema_version() != "0.5.0":
-        lint.err("L13", f"{lint.rel(contract_path)}: portfolio-competition requires workspace schema 0.5.0")
+    if delivery_mode == "portfolio-competition" and lint.schema_version() not in {"0.5.0", "0.6.0"}:
+        lint.err("L13", f"{lint.rel(contract_path)}: portfolio-competition requires workspace schema 0.5.0+")
     if not lint.section_text(contract, "Governance profile"):
         if workspace_v3:
             lint.err("L8", f"{lint.rel(contract_path)}: v0.3 project missing Governance profile")
@@ -383,7 +467,7 @@ def check(lint, proj, through="final"):
             lint.err("L8", f"{lint.rel(progress_path)}: gate approval mode does not match contract - {name}")
         if verdict != "PASS":
             target = lint.local_link_target(proj, row["Evidence"])
-            current_schema = lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"}
+            current_schema = lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"}
             if current_schema and verdict == "PENDING" and target:
                 if not target.endswith(".json") or not _inside(target, os.path.join(proj, "raw")) or not os.path.isfile(target):
                     lint.err("L8", f"{lint.rel(progress_path)}: {name} reopen decision must be immutable under project raw/")
@@ -458,7 +542,7 @@ def check(lint, proj, through="final"):
                 lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence must be immutable under project raw/")
             else:
                 approval_text = _read(lint, target, "L8")
-                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"}:
+                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
                     try:
                         decision = json.loads(approval_text)
                         import workflow
@@ -511,10 +595,10 @@ def check(lint, proj, through="final"):
 
     future_phase_done = any(phase_status.get(name) == "done" for name in (
         "P1 requirements", "P2 structure", "P3 research", "P4 scoping", "P5+P6 increments"))
-    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"} and not future_phase_done:
+    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"} and not future_phase_done:
         future_tables = (
             ("01_REQUIREMENTS.md", "Requirements ledger", REQUIREMENTS_LEDGER_COLUMNS),
-            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"} else EVIDENCE_COLUMNS),
+            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"} else EVIDENCE_COLUMNS),
             ("04_SCOPE.md", "Impact dimensions", DIMENSION_COLUMNS),
             ("04_SCOPE.md", "Action readiness", ACTION_COLUMNS),
             ("06_VERIFICATION.md", "Requirement verdicts", REQUIREMENT_COLUMNS),
@@ -528,7 +612,7 @@ def check(lint, proj, through="final"):
         return
 
     evidence_path = os.path.join(proj, "03_EVIDENCE.md")
-    if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0"}:
+    if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
         raw_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS_V041, "L9", lint.rel(evidence_path))
         evidence_rows = []
         for row in raw_rows:

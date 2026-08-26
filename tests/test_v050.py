@@ -44,6 +44,19 @@ class V050Tests(unittest.TestCase):
         }.items():
             with open(os.path.join(self.ws, rel), "w", encoding="utf-8") as handle:
                 handle.write(text)
+        self.pass_g1()
+
+    def pass_g1(self):
+        path = os.path.join(self.proj, "PROGRESS.md")
+        text = open(path, encoding="utf-8").read().replace(
+            "| G1 | PENDING | v1 | human | | | |",
+            "| G1 | PASS | v1 | human | Daniel | 2026-01-01T00:00:00Z | [approval](raw/approval-g1.md) |")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        with open(os.path.join(self.proj, "raw", "approval-g1.md"), "w", encoding="utf-8") as handle:
+            handle.write("Daniel approves Gate 1 for contract v1.")
+        with open(os.path.join(self.proj, "logs", "log.md"), "a", encoding="utf-8") as handle:
+            handle.write("GATE-PASS: G1 contract=v1\n")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -100,14 +113,15 @@ class V050Tests(unittest.TestCase):
                  "evidence": [source3], "rejection_reason": "dependency unavailable", "reopen_conditions": ["dependency available"]},
             ],
         }
-        probe = self.raw("preflight/probe.txt", "probe pass\n")
+        probe = self.raw("preflight/probe.txt", "runner=checker-1\nexit_code=0\ncheck 1 ok\n")
         preflight = {"schema": "ldl-preflight-manifest-v1", "contract_version": "v1", "blockers": 0, "dependencies": [
             {"id": "DEP-1", "status": "PASS", "probe": "real endpoint", "limit": "bounded",
              "fallback": "captured-real", "credential_required": False, "runner_id": "checker-1",
              "executed_at": "2026-01-01T00:00:00Z", "exit_code": 0, "expected_exit_code": 0,
              "checks": 1, "evidence": probe}]}
         capability = {"schema": "ldl-capability-proof-v1", "contract_version": "v1", "capabilities": [
-            {"id": "CAP-1", "promise": "one result", "required_level": "LIVE_VERIFIED", "status": "LIVE_VERIFIED",
+            {"id": "CAP-1", "requirement_id": "R-01", "promise": "one result",
+             "required_level": "LIVE_VERIFIED", "status": "LIVE_VERIFIED",
              "demo_evidence": probe, "live_evidence": probe, "limitations": "bounded fixture"}]}
         evaluator_bytes = json.dumps(evaluator, ensure_ascii=False, indent=2).encode("utf-8")
         evaluator_sha = hashlib.sha256(evaluator_bytes).hexdigest()
@@ -120,17 +134,20 @@ class V050Tests(unittest.TestCase):
         with open(human_path, "w", encoding="utf-8") as handle:
             json.dump(human_review, handle, ensure_ascii=False, indent=2)
         human_evidence = {"path": "raw/human-review.json", "sha256": hashlib.sha256(open(human_path, "rb").read()).hexdigest()}
+        card1 = self.raw("judge/eval-1.txt", "judge=EVAL-1\nscore=91\n")
+        card2 = self.raw("judge/human-1.txt", "judge=HUMAN-1\nscore=90\n")
+        card3 = self.raw("judge/agent-1.txt", "judge=AGENT-1\nscore=92\n")
         judge = {"schema": "ldl-judge-score-v1", "contract_version": "v1", "rounds": [
             {"round": 1, "judge_id": "EVAL-1", "judge_type": "ai-structural",
              "judge_sha256": evaluator_sha, "artifact_sha256": source["sha256"], "score": 91,
-             "blocking_defects": [], "unjudgeable": ["human taste"], "evidence": probe},
+             "blocking_defects": [], "unjudgeable": ["human taste"], "evidence": card1},
             {"round": 1, "judge_id": "HUMAN-1", "judge_type": "actual-human",
              "judge_sha256": evaluator_sha, "artifact_sha256": source["sha256"], "score": 90,
-             "blocking_defects": [], "unjudgeable": ["hidden implementation"], "evidence": probe,
+             "blocking_defects": [], "unjudgeable": ["hidden implementation"], "evidence": card2,
              "human_evidence": human_evidence},
             {"round": 1, "judge_id": "AGENT-1", "judge_type": "agent-consumer",
              "judge_sha256": evaluator_sha, "artifact_sha256": source["sha256"], "score": 92,
-             "blocking_defects": [], "unjudgeable": ["human emotion"], "evidence": probe}]}
+             "blocking_defects": [], "unjudgeable": ["human emotion"], "evidence": card3}]}
         submission = {"schema": "ldl-submission-manifest-v1", "contract_version": "v1", "required_files": ["artifact"],
                       "included_files": ["artifact"], "excluded_files": [],
                       "secret_scan": "PASS", "link_check": "PASS", "log_integrity": "PASS",
@@ -141,7 +158,7 @@ class V050Tests(unittest.TestCase):
             self.write_json(rel, obj)
 
     def test_latest_scaffold_has_portfolio_profile_and_project_prompt_log(self):
-        self.assertEqual("0.5.0", open(os.path.join(self.ws, ".ldl-version"), encoding="utf-8").read().strip())
+        self.assertEqual("0.6.0", open(os.path.join(self.ws, ".ldl-version"), encoding="utf-8").read().strip())
         for rel in ("02_EVALUATION.json", "03_PORTFOLIO.json", "04_PREFLIGHT.json",
                     "06_CAPABILITIES.json", "06_JUDGE_SCORES.json", "06_SUBMISSION.json",
                     "logs/prompts.jsonl", "logs/intervention-ledger.csv"):
