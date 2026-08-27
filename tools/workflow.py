@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LDL v0.6.0 deterministic workflow operations (stdlib only).
+"""LDL v0.6.1 deterministic workflow operations (stdlib only).
 
 Commands:
   workflow.py scratch-init TARGET SCRATCH
@@ -114,7 +114,7 @@ def inside_raw(rel):
 def is_append_log(rel):
     parts = rel.split(os.sep)
     return "logs" in parts and parts[-1] in {
-        "log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv"}
+        "log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv", "runner-ledger.csv"}
 
 
 def is_root_tool(rel):

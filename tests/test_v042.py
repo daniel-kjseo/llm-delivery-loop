@@ -25,7 +25,7 @@ class V042SafetyTests(unittest.TestCase):
         shutil.rmtree(tmp)
         try:
             scaffold.init(tmp)
-            self.assertEqual("0.6.0", open(os.path.join(tmp, ".ldl-version"), encoding="utf-8").read().strip())
+            self.assertEqual("0.6.1", open(os.path.join(tmp, ".ldl-version"), encoding="utf-8").read().strip())
             with open(os.path.join(tmp, ".ldl-version"), "w", encoding="utf-8") as handle:
                 handle.write("0.4.1\n")
             scaffold.init(tmp, migrate_v042=True)

@@ -28,8 +28,10 @@ Checks
                        has a separated non-code judge; the contract cites
                        at least one interview ID (IV-nn)
   L5 raw immutability  hash manifest of raw/ files; a changed hash fails
-  L6 log append-only   event, cost, prompt, and intervention ledgers may only grow;
-                       prompt JSONL also validates schema/hash/secret hygiene
+  L6 log append-only   event, cost, prompt, intervention, and runner ledgers may only grow;
+                       prompt JSONL also validates schema/hash/secret hygiene;
+                       the runner ledger validates header, event vocabulary,
+                       and STARTED-before-completion ordering
 State for L5/L6 lives in logs/.lint-state.json (created on first run).
   L7 installation      workspace/shared-protocol template sentinels are gone
   L8 gate integrity    v0.3 gate ledger vocabulary, approval evidence,
@@ -42,7 +44,7 @@ State for L5/L6 lives in logs/.lint-state.json (created on first run).
   L12 lean MVP         execution-economy ceilings, MVP-1 rendered/independent
                        proof, packet/cost telemetry completion boundary
 """
-import hashlib, json, os, re, stat, sys
+import csv, hashlib, json, os, re, stat, sys
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
@@ -267,7 +269,7 @@ class Lint:
             self.check_contract(full)
             self.check_integrity_model(full)
             marker_value = self.schema_version()
-            if marker_value in {"0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+            if marker_value in {"0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
                 import lean
                 lean.check(self, full, self.through)
 
@@ -280,7 +282,7 @@ class Lint:
         text = self.read_text(c, "L4")
         if text is None:
             return
-        if self.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"} and os.path.getsize(c) > 8192:
+        if self.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"} and os.path.getsize(c) > 8192:
             self.err("L4", f"{rel}: contract exceeds 8192 bytes - {os.path.getsize(c)}")
         text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # HTML comments are not contract content
 
@@ -389,7 +391,7 @@ class Lint:
         if os.path.isfile(marker):
             marker_value = self.read_text(marker, "L7")
             marker_value = marker_value.strip() if marker_value is not None else None
-            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+            if marker_value not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
                 self.err("L7", f"unsupported or malformed .ldl-version: {marker_value or 'empty'}")
         if state.get("schema") and marker_value is None:
             self.err("L7", ".ldl-version deleted after v0.3 baseline - legacy downgrade refused")
@@ -400,7 +402,7 @@ class Lint:
             elif (prior_schema, marker_value) in {
                     ("0.3.0", "0.4.0"), ("0.3.0", "0.4.1"), ("0.3.0", "0.4.2"),
                     ("0.4.0", "0.4.1"), ("0.4.0", "0.4.2"),
-                    ("0.4.1", "0.4.2"), ("0.4.2", "0.5.0"), ("0.5.0", "0.6.0")}:
+                    ("0.4.1", "0.4.2"), ("0.4.2", "0.5.0"), ("0.5.0", "0.6.0"), ("0.6.0", "0.6.1")}:
                 state["schema"] = marker_value
             else:
                 self.err("L7", f"lint schema {prior_schema} does not match marker {marker_value}")
@@ -448,7 +450,7 @@ class Lint:
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for f in files:
                 parts = self.rel(os.path.join(r, f)).split(os.sep)
-                if "logs" not in parts or f not in {"log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv"}:
+                if "logs" not in parts or f not in {"log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv", "runner-ledger.csv"}:
                     continue
                 p = os.path.join(r, f)
                 key = self.rel(p)
@@ -494,6 +496,23 @@ class Lint:
                                 raise ValueError("future")
                         except (TypeError, ValueError):
                             self.err("L6", f"prompt log timestamp invalid at {key}:{number}")
+                if f == "runner-ledger.csv":
+                    columns = ["timestamp", "event", "invocation_id", "phase", "runner_id", "session", "exit_code", "wall_seconds"]
+                    lines = data.decode("utf-8", errors="replace").splitlines()
+                    if lines and lines[0] != ",".join(columns):
+                        self.err("L6", f"runner ledger header invalid at {key}")
+                    started = set()
+                    for number, row in enumerate(csv.DictReader(lines), 2):
+                        if None in row or any(row.get(column) is None for column in columns):
+                            self.err("L6", f"runner ledger malformed row at {key}:{number}")
+                            continue
+                        if row["event"] == "STARTED":
+                            started.add(row["invocation_id"])
+                        elif row["event"] in {"COMPLETED", "ABORTED"}:
+                            if row["invocation_id"] not in started:
+                                self.err("L6", f"runner ledger {row['event']} without STARTED at {key}:{number}")
+                        else:
+                            self.err("L6", f"runner ledger event invalid at {key}:{number}")
                 prev = state["logs"].get(key)
                 if prev:
                     if len(data) < prev["len"] or hashlib.sha256(data[: prev["len"]]).hexdigest() != prev["sha"]:
@@ -549,7 +568,7 @@ def selftest():
         scaffold.init(ws)
         results["init copies current tools"] = all(
             os.path.isfile(os.path.join(ws, "tools", name))
-            for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py"))
+            for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py", "invoke.py"))
         version_marker = os.path.join(ws, ".ldl-version")
         os.remove(version_marker)  # fixtures 1-28 prove legacy compatibility
         proj = scaffold.new_project(ws, "good", "2026-01-01")

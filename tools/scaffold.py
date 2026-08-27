@@ -14,7 +14,7 @@ import re
 import shutil
 import sys
 
-LATEST_VERSION = "0.6.0"
+LATEST_VERSION = "0.6.1"
 PROFILES = {"startup-reversible", "gated-high-risk", "pre-engineering-decision", "portfolio-competition"}
 WS_DIRS = ["raw", "wiki", "templates", "logs", "tools", "projects", "owner"]
 
@@ -215,6 +215,7 @@ PROJ_FILES = {
     "logs/cost-ledger.csv": "timestamp,phase,role,model,input_tokens,output_tokens,cache_tokens,llm_calls,checker_runs,wall_seconds,evidence\n",
     "logs/prompts.jsonl": "",
     "logs/intervention-ledger.csv": "timestamp,actor,intervention_type,target,reason,result,human_minutes\n",
+    "logs/runner-ledger.csv": "timestamp,event,invocation_id,phase,runner_id,session,exit_code,wall_seconds\n",
 }
 
 PORTFOLIO_FILES = {
@@ -236,7 +237,7 @@ def write(path, content):
             handle.write(content)
 
 
-def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate_v042=False, migrate_v050=False, migrate_v060=False):
+def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate_v042=False, migrate_v050=False, migrate_v060=False, migrate_v061=False):
     existed = os.path.isdir(root) and bool(os.listdir(root))
     marker = os.path.join(root, ".ldl-version")
     if existed and not os.path.isfile(marker) and not migrate_v03:
@@ -244,8 +245,10 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
     if os.path.isfile(marker):
         with open(marker, encoding="utf-8") as handle:
             current = handle.read().strip()
-        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
             sys.exit(f"unsupported workspace schema: {current or 'empty'}")
+        if migrate_v061 and current != "0.6.0":
+            sys.exit("v0.6.1 migration requires a v0.6.0 workspace; migrate sequentially first")
         if migrate_v060 and current != "0.5.0":
             sys.exit("v0.6.0 migration requires a v0.5.0 workspace; migrate sequentially first")
         if migrate_v050 and current != "0.4.2":
@@ -265,7 +268,10 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
         if current == "0.5.0" and not migrate_v060:
             print(root)
             return
-        if current == "0.6.0":
+        if current == "0.6.0" and not migrate_v061:
+            print(root)
+            return
+        if current == "0.6.1":
             print(root)
             return
         if current == "0.4.0" and migrate_v042:
@@ -312,13 +318,13 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
         os.makedirs(os.path.join(root, directory), exist_ok=True)
     for rel, content in WS_FILES.items():
         write(os.path.join(root, rel), content)
-    if (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060) and os.path.isfile(marker):
+    if (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or migrate_v061) and os.path.isfile(marker):
         with open(marker, encoding="utf-8") as handle:
             current = handle.read().strip()
-        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
             sys.exit(f"cannot migrate unsupported schema: {current or 'empty'}")
         with open(marker, "w", encoding="utf-8") as handle:
-            handle.write((LATEST_VERSION if migrate_v060 else "0.5.0" if migrate_v050 else "0.4.2" if migrate_v042 else "0.4.1" if migrate_v041 else "0.4.0") + "\n")
+            handle.write((LATEST_VERSION if migrate_v061 else "0.6.0" if migrate_v060 else "0.5.0" if migrate_v050 else "0.4.2" if migrate_v042 else "0.4.1" if migrate_v041 else "0.4.0") + "\n")
         index = os.path.join(root, "index.md")
         if os.path.isfile(index):
             with open(index, encoding="utf-8") as handle:
@@ -346,10 +352,10 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
                 with open(index, "w", encoding="utf-8") as handle:
                     handle.write(text)
     source_dir = os.path.dirname(os.path.abspath(__file__))
-    for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py"):
+    for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py", "invoke.py"):
         source = os.path.join(source_dir, name)
         target = os.path.join(root, "tools", name)
-        if os.path.isfile(source) and (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or not os.path.exists(target)):
+        if os.path.isfile(source) and (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or migrate_v061 or not os.path.exists(target)):
             shutil.copy2(source, target)
     print(root)
 
@@ -360,12 +366,12 @@ NAME_OK = re.compile(r"^[A-Za-z0-9가-힣][A-Za-z0-9가-힣._-]*$")
 def project_files(profile, schema_version=LATEST_VERSION):
     if profile not in PROFILES:
         raise SystemExit(f"unsupported delivery profile: {profile}")
-    if profile == "pre-engineering-decision" and schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+    if profile == "pre-engineering-decision" and schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
         raise SystemExit(f"{profile} profile requires a v0.4.1+ workspace")
-    if profile == "portfolio-competition" and schema_version not in {"0.5.0", "0.6.0"}:
+    if profile == "portfolio-competition" and schema_version not in {"0.5.0", "0.6.0", "0.6.1"}:
         raise SystemExit("portfolio-competition profile requires a v0.5.0+ workspace")
     files = dict(PROJ_FILES)
-    if schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+    if schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
         files["03_EVIDENCE.md"] = LEGACY_EVIDENCE
     if profile == "pre-engineering-decision":
         files["00_CONTRACT.md"] = PRE_ENGINEERING_CONTRACT
@@ -402,7 +408,7 @@ def new_project(root, name, date=None, profile="startup-reversible"):
     if os.path.isfile(marker_path):
         with open(marker_path, encoding="utf-8") as handle:
             schema_version = handle.read().strip()
-    if schema_version not in {"legacy", "0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0"}:
+    if schema_version not in {"legacy", "0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
         sys.exit(f"unsupported workspace schema: {schema_version or 'empty'}")
     for directory in ["05_engineering/evidence/deterministic", "05_engineering/evidence/rendered", "05_engineering/evidence/independent", "05_engineering/evidence/release", "05_engineering/evidence/experiments", "05_engineering/evidence/increments", "raw", "logs/sessions"]:
         os.makedirs(os.path.join(proj, directory), exist_ok=True)
@@ -435,6 +441,7 @@ def main():
     p_init.add_argument("--migrate-v042", action="store_true")
     p_init.add_argument("--migrate-v050", action="store_true")
     p_init.add_argument("--migrate-v060", action="store_true")
+    p_init.add_argument("--migrate-v061", action="store_true")
     p_new = sub.add_parser("new")
     p_new.add_argument("name")
     p_new.add_argument("--date")
@@ -442,7 +449,7 @@ def main():
     p_new.add_argument("--profile", choices=sorted(PROFILES), default="startup-reversible")
     args = parser.parse_args()
     if args.cmd == "init":
-        init(args.path, args.migrate_v03, args.migrate_v04, args.migrate_v041, args.migrate_v042, args.migrate_v050, args.migrate_v060)
+        init(args.path, args.migrate_v03, args.migrate_v04, args.migrate_v041, args.migrate_v042, args.migrate_v050, args.migrate_v060, args.migrate_v061)
     else:
         new_project(args.root, args.name, args.date, args.profile)
 
