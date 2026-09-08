@@ -84,6 +84,57 @@ def _terminate(process):
         process.wait()
 
 
+class _Interrupted(Exception):
+    """SIGTERM or SIGINT, raised in the main thread at a point we chose."""
+
+
+class _InterruptGuard:
+    """Signal handling that spans the reservation, not only the child wait.
+
+    Between the STARTED row and the child there is no process to kill, so a
+    signal in that window must not be left to the default handler: that is
+    exactly how a STARTED row ends up with no terminal row at all. The handlers
+    are installed before the reservation and stay deferred - recording the
+    signal instead of raising - until a child exists to interrupt, so no signal
+    can unwind the ledger write itself or strand an invocation id nobody holds.
+    """
+
+    def __init__(self):
+        self.pending = None
+        self._deferring = True
+        self._previous = []
+
+    def install(self):
+        self._previous = [(sig, signal.signal(sig, self._trap))
+                          for sig in (signal.SIGTERM, signal.SIGINT)]
+
+    def arm(self):
+        """Stop deferring: from here a signal unwinds to the abort path."""
+        self._deferring = False
+
+    def defer(self):
+        """Record signals instead of raising them. Every abort path enters the
+        teardown through here, whichever way the interruption arrived."""
+        self._deferring = True
+
+    def raise_pending(self):
+        """Act on a signal recorded while deferred, exactly as the trap would."""
+        self.defer()
+        raise _Interrupted()
+
+    def restore(self):
+        for sig, handler in self._previous:
+            signal.signal(sig, handler)
+
+    def _trap(self, signum, frame):
+        if self.pending is None:
+            self.pending = signum
+        if not self._deferring:
+            # Raise once. A second signal arriving while the terminal row is
+            # being written is recorded, never raised: the row is worth more.
+            self.raise_pending()
+
+
 def run(project, phase, runner_id, session, command, job=None, approvals_root=None,
         pinned=None, runner_role="runner", expect=None, cwd=None):
     project = os.path.realpath(project)
@@ -129,62 +180,78 @@ def run(project, phase, runner_id, session, command, job=None, approvals_root=No
         print("INVOKE ENFORCEMENT - legacy (limited: launch policy only; no job binding, "
               "no command binding, no output containment)")
 
-    try:
-        invocation_id = execution.reserve_and_start(project, phase, runner_id, session)
-    except execution.ManifestError as exc:
-        refuse(str(exc))
-    if frozen_expect:
-        # Claim the declared output paths against every other live invocation,
-        # and record the honest terminal row if the claim cannot be granted.
-        try:
-            execution.reserve_outputs(project, invocation_id, frozen_expect)
-        except execution.ManifestError as exc:
-            append_event(project, "ABORTED", invocation_id, phase, runner_id, session,
-                         wall_seconds="0.000")
-            refuse(str(exc))
-    if binding:
-        execution.record_job_binding(project, {
-            "schema": "ldl-approved-job-binding-v1", "timestamp": utcnow(),
-            "invocation_id": invocation_id, "job_sha256": binding["job_sha256"],
-            "enforcement": binding["enforcement"], "trust_root": binding["approval"]["trust_root"],
-            "approver": binding["approval"].get("approver"),
-            "approval_mode": binding["approval"].get("approval_mode"),
-            "approval_path": binding["approval"].get("approval_path"),
-            "expected_manifest_sha256": expect_digest,
-            "phase": phase, "runner_id": runner_id, "runner_role": binding["job"]["runner_role"],
-            "output_root": binding["job"]["output_root"], "profile": decision["profile"],
-            "limits": binding["limits"],
-        })
-
-    interrupted = type("Interrupted", (Exception,), {})
-
-    def trap(signum, frame):
-        raise interrupted()
-
-    previous = [(sig, signal.signal(sig, trap)) for sig in (signal.SIGTERM, signal.SIGINT)]
-    started_at = time.monotonic()
-    started_wall = time.time()
+    # Armed before the ledger write, because the window a signal can ruin opens
+    # the moment the STARTED row becomes visible, not when the child starts.
+    guard = _InterruptGuard()
+    guard.install()
     process = None
     try:
         try:
-            process = subprocess.Popen(command, cwd=cwd, start_new_session=True)
-        except OSError as exc:
+            invocation_id = execution.reserve_and_start(project, phase, runner_id, session)
+        except execution.ManifestError as exc:
+            refuse(str(exc))
+        if frozen_expect:
+            # Claim the declared output paths against every other live invocation,
+            # and record the honest terminal row if the claim cannot be granted.
+            try:
+                execution.reserve_outputs(project, invocation_id, frozen_expect)
+            except execution.ManifestError as exc:
+                append_event(project, "ABORTED", invocation_id, phase, runner_id, session,
+                             wall_seconds="0.000")
+                refuse(str(exc))
+        if binding:
+            execution.record_job_binding(project, {
+                "schema": "ldl-approved-job-binding-v1", "timestamp": utcnow(),
+                "invocation_id": invocation_id, "job_sha256": binding["job_sha256"],
+                "enforcement": binding["enforcement"], "trust_root": binding["approval"]["trust_root"],
+                "approver": binding["approval"].get("approver"),
+                "approval_mode": binding["approval"].get("approval_mode"),
+                "approval_path": binding["approval"].get("approval_path"),
+                "expected_manifest_sha256": expect_digest,
+                "phase": phase, "runner_id": runner_id, "runner_role": binding["job"]["runner_role"],
+                "output_root": binding["job"]["output_root"], "profile": decision["profile"],
+                "limits": binding["limits"],
+            })
+
+        if guard.pending is not None:
+            # Signalled during setup: the invocation is on the ledger and
+            # nothing has run. Close the row and give the claim back.
+            append_event(project, "ABORTED", invocation_id, phase, runner_id, session,
+                         wall_seconds="0.000")
+            execution.release_outputs(project, invocation_id)
+            print(f"INVOKE ABORTED - id={invocation_id} phase={phase} runner={runner_id}")
+            return 130
+
+        started_at = time.monotonic()
+        started_wall = time.time()
+        try:
+            try:
+                process = subprocess.Popen(command, cwd=cwd, start_new_session=True)
+            except OSError as exc:
+                wall = f"{time.monotonic() - started_at:.3f}"
+                append_event(project, "ABORTED", invocation_id, phase, runner_id, session, wall_seconds=wall)
+                execution.release_outputs(project, invocation_id)
+                print(f"INVOKE LAUNCH FAILED - id={invocation_id} phase={phase} runner={runner_id} error={exc}")
+                return 127
+            # There is a child to kill now, so signals may raise again. A signal
+            # recorded while Popen was running is acted on here, not lost.
+            guard.arm()
+            if guard.pending is not None:
+                guard.raise_pending()
+            exit_code = process.wait()
+        except (_Interrupted, KeyboardInterrupt):
+            # Teardown is deferred whatever raised us - the trap, the pending
+            # signal or a KeyboardInterrupt - so a signal arriving during
+            # _terminate cannot escape before the ABORTED row and the release.
+            guard.defer()
+            _terminate(process)
             wall = f"{time.monotonic() - started_at:.3f}"
             append_event(project, "ABORTED", invocation_id, phase, runner_id, session, wall_seconds=wall)
             execution.release_outputs(project, invocation_id)
-            print(f"INVOKE LAUNCH FAILED - id={invocation_id} phase={phase} runner={runner_id} error={exc}")
-            return 127
-        exit_code = process.wait()
-    except (interrupted, KeyboardInterrupt):
-        _terminate(process)
-        wall = f"{time.monotonic() - started_at:.3f}"
-        append_event(project, "ABORTED", invocation_id, phase, runner_id, session, wall_seconds=wall)
-        execution.release_outputs(project, invocation_id)
-        print(f"INVOKE ABORTED - id={invocation_id} phase={phase} runner={runner_id}")
-        return 130
+            print(f"INVOKE ABORTED - id={invocation_id} phase={phase} runner={runner_id}")
+            return 130
     finally:
-        for sig, handler in previous:
-            signal.signal(sig, handler)
+        guard.restore()
     wall = f"{time.monotonic() - started_at:.3f}"
     append_event(project, "COMPLETED", invocation_id, phase, runner_id, session,
                  exit_code=str(exit_code), wall_seconds=wall)

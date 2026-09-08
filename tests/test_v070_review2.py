@@ -307,5 +307,170 @@ class MeasurementFiniteTests(Workspace):
         self.assertEqual(1, record["input_tokens"])
 
 
+# =====================================================================
+# CI fix - a signal after the STARTED row must still leave a terminal row
+# (GitHub run 34282452224, Ubuntu / Python 3.11, test_v061)
+# =====================================================================
+class InterruptDuringSetupRegressionTests(Workspace):
+    """The v0.6.1 interruption test was not wrong, it was a race.
+
+    tools/invoke.py installed its SIGTERM/SIGINT handlers only after the
+    reservation, the output claim and the job binding, so a signal arriving
+    once the STARTED row was already on disk - exactly the window the v0.6.1
+    test polls for - was taken by the default handler and killed the wrapper
+    with a STARTED row and no terminal row. Python 3.9 won that race often
+    enough to stay green; 3.11 lost it in CI.
+
+    These probes deliver a real signal at a fixed point inside the setup
+    window instead of polling for it, so the window is exercised on every run.
+    The wrapper runs in its own subprocess: the signal goes to the driver, not
+    to the test process.
+    """
+
+    DRIVER = '''import os
+import signal
+import sys
+
+sys.path.insert(0, {root!r})
+sys.path.insert(0, os.path.join({root!r}, "tools"))
+import execution
+import invoke
+
+_real = getattr(execution, {target!r})
+
+
+def _patched(*args, **kwargs):
+    result = _real(*args, **kwargs)
+    # A real signal at a fixed point: the ledger write has already happened and
+    # the wrapper has not been handed the invocation id back yet.
+    os.kill(os.getpid(), signal.{signame})
+    return result
+
+
+setattr(execution, {target!r}, _patched)
+sys.exit(invoke.run({proj!r}, "P3", "steve", "S-1", {command!r}, expect={expect!r}))
+'''
+
+    def interrupt_after(self, target, signame="SIGTERM", expect=None):
+        """Run the wrapper in a subprocess and signal it inside `target`."""
+        path = os.path.join(self.tmp, "driver.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self.DRIVER.format(root=ROOT, target=target, signame=signame,
+                                            proj=self.proj, command=self.dummy_command(),
+                                            expect=expect))
+        return subprocess.run([sys.executable, path], capture_output=True, text=True, timeout=60)
+
+    def assert_aborted_without_running(self, result):
+        self.assertEqual(130, result.returncode,
+                         f"wrapper did not survive the signal: {result.stdout}{result.stderr}")
+        self.assertIn("INVOKE ABORTED", result.stdout)
+        self.assertEqual((1, 0, 1), self.counts())
+        started, aborted = self.ledger_events()
+        self.assertEqual("STARTED", started["event"])
+        self.assertEqual("ABORTED", aborted["event"])
+        self.assertEqual(started["invocation_id"], aborted["invocation_id"])
+        self.assertFalse(os.path.exists(self.sentinel),
+                         "an invocation interrupted before launch still ran the command")
+
+    def test_sigterm_inside_the_reservation_still_writes_aborted(self):
+        self.typed_pass("G1")
+        self.assert_aborted_without_running(self.interrupt_after("reserve_and_start"))
+
+    def test_sigint_inside_the_reservation_still_writes_aborted(self):
+        self.typed_pass("G1")
+        self.assert_aborted_without_running(
+            self.interrupt_after("reserve_and_start", signame="SIGINT"))
+
+    def test_sigterm_inside_the_output_claim_releases_the_reservation(self):
+        self.typed_pass("G1")
+        manifest = os.path.join(self.tmp, "expected-output.json")
+        with open(manifest, "w", encoding="utf-8") as handle:
+            json.dump({"schema": "ldl-expected-output-v1", "job_id": "JOB-1",
+                       "output_root": "05_engineering/evidence/increments",
+                       "outputs": [{"id": "OUT-01", "path": "a.md", "format": "markdown",
+                                    "min_bytes": 1}]}, handle)
+        self.assert_aborted_without_running(
+            self.interrupt_after("reserve_outputs", expect=manifest))
+        self.assertEqual({}, execution.read_reservations(self.proj),
+                         "an interrupted setup left an orphan output claim behind")
+
+    DOUBLE_DRIVER = '''import os
+import signal
+import sys
+
+sys.path.insert(0, {root!r})
+sys.path.insert(0, os.path.join({root!r}, "tools"))
+import invoke
+
+_popen = invoke.subprocess.Popen
+_terminate = invoke._terminate
+_children = []
+
+
+def popen(*args, **kwargs):
+    child = _popen(*args, **kwargs)
+    _children.append(child)
+    # Recorded while Popen had not returned yet: the wrapper acts on it after.
+    os.kill(os.getpid(), signal.SIGTERM)
+    return child
+
+
+def terminate(child):
+    _terminate(child)
+    # The second signal, delivered inside teardown, must be recorded and never
+    # raised - the terminal row is worth more than a prompt exit.
+    os.kill(os.getpid(), signal.SIGINT)
+
+
+invoke.subprocess.Popen = popen
+invoke._terminate = terminate
+try:
+    code = invoke.run({proj!r}, "P3", "steve", "S-1",
+                      [sys.executable, "-c", "import time; time.sleep(60)"],
+                      expect={expect!r})
+finally:
+    for child in _children:
+        if child.poll() is None:
+            _terminate(child)
+    print("CHILD-RETURNCODES " + repr([child.returncode for child in _children]))
+sys.exit(code)
+'''
+
+    def expect_manifest(self):
+        path = os.path.join(self.tmp, "expected-output.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"schema": "ldl-expected-output-v1", "job_id": "JOB-1",
+                       "output_root": "05_engineering/evidence/increments",
+                       "outputs": [{"id": "OUT-01", "path": "a.md", "format": "markdown",
+                                    "min_bytes": 1}]}, handle)
+        return path
+
+    def test_a_second_signal_during_teardown_cannot_lose_the_terminal_row(self):
+        """Independent review of the first CI fix, reproduced probe.
+
+        A SIGTERM recorded while Popen had not returned was acted on by an
+        explicit raise that left the guard armed, so a SIGINT arriving during
+        `_terminate` escaped the abort handler: ledger (1, 0, 0) and the output
+        claim still held. Both signals are real and both are delivered at fixed
+        points, so this covers the repeat-signal path on every run.
+        """
+        self.typed_pass("G1")
+        path = os.path.join(self.tmp, "double-driver.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self.DOUBLE_DRIVER.format(root=ROOT, proj=self.proj,
+                                                   expect=self.expect_manifest()))
+        result = subprocess.run([sys.executable, path], capture_output=True, text=True,
+                                timeout=120)
+        self.assertEqual(130, result.returncode,
+                         f"teardown signal escaped the abort path: {result.stdout}{result.stderr}")
+        self.assertIn("INVOKE ABORTED", result.stdout)
+        self.assertEqual((1, 0, 1), self.counts())
+        started, aborted = self.ledger_events()
+        self.assertEqual(started["invocation_id"], aborted["invocation_id"])
+        self.assertEqual({}, execution.read_reservations(self.proj),
+                         "a repeated signal left an orphan output claim behind")
+        self.assertNotIn("CHILD-RETURNCODES [None]", result.stdout,
+                         "the child was still running when the wrapper aborted")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
