@@ -393,7 +393,7 @@ def _read(lint, path, code):
 
 
 def check(lint, proj, through="final"):
-    if lint.schema_version() in {"0.5.0", "0.6.0", "0.6.1"}:
+    if lint.schema_version() in {"0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         try:
             check_v050(lint, proj, through)
         except (TypeError, AttributeError, KeyError, IndexError) as exc:
@@ -404,7 +404,7 @@ def check(lint, proj, through="final"):
     if not contract:
         return
     delivery_mode = lint.scalar_field(lint.section_text(contract, "Delivery profile"), "Delivery mode")
-    if delivery_mode == "portfolio-competition" and lint.schema_version() not in {"0.5.0", "0.6.0", "0.6.1"}:
+    if delivery_mode == "portfolio-competition" and lint.schema_version() not in {"0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         lint.err("L13", f"{lint.rel(contract_path)}: portfolio-competition requires workspace schema 0.5.0+")
     if not lint.section_text(contract, "Governance profile"):
         if workspace_v3:
@@ -467,7 +467,7 @@ def check(lint, proj, through="final"):
             lint.err("L8", f"{lint.rel(progress_path)}: gate approval mode does not match contract - {name}")
         if verdict != "PASS":
             target = lint.local_link_target(proj, row["Evidence"])
-            current_schema = lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}
+            current_schema = lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}
             if current_schema and verdict == "PENDING" and target:
                 if not target.endswith(".json") or not _inside(target, os.path.join(proj, "raw")) or not os.path.isfile(target):
                     lint.err("L8", f"{lint.rel(progress_path)}: {name} reopen decision must be immutable under project raw/")
@@ -542,7 +542,7 @@ def check(lint, proj, through="final"):
                 lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence must be immutable under project raw/")
             else:
                 approval_text = _read(lint, target, "L8")
-                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+                if target.endswith(".json") and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
                     try:
                         decision = json.loads(approval_text)
                         import workflow
@@ -595,10 +595,10 @@ def check(lint, proj, through="final"):
 
     future_phase_done = any(phase_status.get(name) == "done" for name in (
         "P1 requirements", "P2 structure", "P3 research", "P4 scoping", "P5+P6 increments"))
-    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"} and not future_phase_done:
+    if through == "P0" and lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"} and not future_phase_done:
         future_tables = (
             ("01_REQUIREMENTS.md", "Requirements ledger", REQUIREMENTS_LEDGER_COLUMNS),
-            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"} else EVIDENCE_COLUMNS),
+            ("03_EVIDENCE.md", "Evidence ledger", EVIDENCE_COLUMNS_V041 if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"} else EVIDENCE_COLUMNS),
             ("04_SCOPE.md", "Impact dimensions", DIMENSION_COLUMNS),
             ("04_SCOPE.md", "Action readiness", ACTION_COLUMNS),
             ("06_VERIFICATION.md", "Requirement verdicts", REQUIREMENT_COLUMNS),
@@ -612,7 +612,7 @@ def check(lint, proj, through="final"):
         return
 
     evidence_path = os.path.join(proj, "03_EVIDENCE.md")
-    if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+    if lint.schema_version() in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         raw_rows = lint.table_rows(_read(lint, evidence_path, "L9"), "Evidence ledger", EVIDENCE_COLUMNS_V041, "L9", lint.rel(evidence_path))
         evidence_rows = []
         for row in raw_rows:

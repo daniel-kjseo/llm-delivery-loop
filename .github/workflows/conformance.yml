@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Compile tools
-        run: python -m py_compile tools/scaffold.py tools/lint.py tools/integrity.py tools/lean.py tools/workflow.py tools/invoke.py
+        run: python -m py_compile tools/scaffold.py tools/lint.py tools/integrity.py tools/lean.py tools/workflow.py tools/invoke.py tools/policy.py tools/execution.py
       - name: Reference selftest
         run: python tools/lint.py --selftest
       - name: v0.3 hostile scenarios
@@ -37,3 +37,9 @@ jobs:
         run: python tests/test_v060.py
       - name: v0.6.1 gated invocation scenarios
         run: python tests/test_v061.py
+      - name: v0.7.0 candidate execution and reachability scenarios
+        run: python tests/test_v070.py
+      - name: v0.7.0 candidate correction counterexamples (independent review 1)
+        run: python tests/test_v070_correction.py
+      - name: v0.7.0 candidate correction counterexamples (independent review 2)
+        run: python tests/test_v070_review2.py

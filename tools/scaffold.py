@@ -14,7 +14,7 @@ import re
 import shutil
 import sys
 
-LATEST_VERSION = "0.6.1"
+LATEST_VERSION = "0.7.0"
 PROFILES = {"startup-reversible", "gated-high-risk", "pre-engineering-decision", "portfolio-competition"}
 WS_DIRS = ["raw", "wiki", "templates", "logs", "tools", "projects", "owner"]
 
@@ -22,7 +22,7 @@ WS_FILES = {
     ".ldl-version": LATEST_VERSION + "\n",
     "CLAUDE.md": "# Workspace constitution\n\n> Engraved at install step 3: identity in one sentence / principles / how we work / permissions and limits / scope constraints / center. Written in the user's own words — not copied from the LDL document.\n",
     "RULES.md": "# RULES — prevention rules (the ratchet)\n\n> One rule per lesson, each with its origin. Every task reads this before starting.\n",
-    "index.md": "# index — link-closed catalog\n\n> Edit, never append. Every managed document is reachable from here.\n\n## Protocol\n- [Workspace constitution](CLAUDE.md)\n- [RULES.md](RULES.md)\n- [Shared project protocol](projects/CLAUDE.md)\n- [Verifier brief](templates/verifier-brief.md)\n- [Quantitative model](templates/quantitative-model.md)\n- [Evidence ledger grammar](templates/evidence-ledger.md)\n- [Typed Gate decision](templates/gate-decision.json)\n- [Lean phase packet](templates/phase-packet.json)\n- [MVP evidence manifest](templates/mvp-evidence.json)\n- [Release evidence manifest](templates/release-evidence.json)\n- [Experiment evidence manifest](templates/experiment-evidence.json)\n- [Evaluation environment](templates/evaluation-environment.json)\n- [Problem portfolio](templates/problem-portfolio.json)\n- [Preflight manifest](templates/preflight-manifest.json)\n- [Capability proof](templates/capability-proof.json)\n- [Judge score](templates/judge-score.json)\n- [Submission manifest](templates/submission-manifest.json)\n- [Owner inbox](owner/inbox.md)\n- [Owner outbox](owner/outbox.md)\n- [Outer-loop log](logs/log.md)\n\n## Projects\n\n## Wiki\n\n## Held problems\n",
+    "index.md": "# index — link-closed catalog\n\n> Edit, never append. Every managed document is reachable from here.\n\n## Protocol\n- [Workspace constitution](CLAUDE.md)\n- [RULES.md](RULES.md)\n- [Shared project protocol](projects/CLAUDE.md)\n- [Verifier brief](templates/verifier-brief.md)\n- [Quantitative model](templates/quantitative-model.md)\n- [Evidence ledger grammar](templates/evidence-ledger.md)\n- [Typed Gate decision](templates/gate-decision.json)\n- [Lean phase packet](templates/phase-packet.json)\n- [MVP evidence manifest](templates/mvp-evidence.json)\n- [Release evidence manifest](templates/release-evidence.json)\n- [Experiment evidence manifest](templates/experiment-evidence.json)\n- [Evaluation environment](templates/evaluation-environment.json)\n- [Problem portfolio](templates/problem-portfolio.json)\n- [Preflight manifest](templates/preflight-manifest.json)\n- [Capability proof](templates/capability-proof.json)\n- [Judge score](templates/judge-score.json)\n- [Submission manifest](templates/submission-manifest.json)\n- [Approved job](templates/approved-job.json)\n- [Expected output manifest](templates/expected-output.json)\n- [Frozen evaluator contract](templates/evaluator-contract.json)\n- [Measurement record](templates/measurement.json)\n- [Status relay](templates/status-relay.md)\n- [Roles and review depth](templates/roles.md)\n- [Owner inbox](owner/inbox.md)\n- [Owner outbox](owner/outbox.md)\n- [Outer-loop log](logs/log.md)\n\n## Projects\n\n## Wiki\n\n## Held problems\n",
     "logs/log.md": "# Outer-loop log (append-only)\n",
     "projects/CLAUDE.md": "# Shared project protocol\n\n> Engraved at install step 3: Phase 0-6 gates, naming, document and log standards. Read the active project's contract (00_CONTRACT.md) before starting any work.\n",
     "templates/verifier-brief.md": "# Read-only verifier brief\n\n- Read the contract and primary evidence before the maker verdict.\n- Target access: read-only. Run mutating tools only on a clone or scratch workspace.\n- Record target tree diff before/after; target mutation must be 0 files.\n- Report Harness / Product / Execution readiness / Method conformance separately.\n",
@@ -39,6 +39,12 @@ WS_FILES = {
     "templates/capability-proof.json": "{\n  \"schema\": \"ldl-capability-proof-v1\",\n  \"contract_version\": \"v1\",\n  \"capabilities\": [],\n  \"_note\": \"each capability binds requirement_id to 01_REQUIREMENTS.md; required_level >= CAPTURED_REAL\"\n}\n",
     "templates/judge-score.json": "{\n  \"schema\": \"ldl-judge-score-v1\",\n  \"contract_version\": \"v1\",\n  \"rounds\": []\n}\n",
     "templates/submission-manifest.json": "{\n  \"schema\": \"ldl-submission-manifest-v1\",\n  \"contract_version\": \"v1\",\n  \"required_files\": [],\n  \"included_files\": [],\n  \"excluded_files\": [],\n  \"secret_scan\": \"NOT_RUN\",\n  \"link_check\": \"NOT_RUN\",\n  \"log_integrity\": \"NOT_RUN\",\n  \"archive_structure\": \"NOT_RUN\",\n  \"evidence\": {\"path\": \"\", \"sha256\": \"\"}\n}\n",
+    "templates/approved-job.json": "{\n  \"schema\": \"ldl-approved-job-v1\",\n  \"project\": \"/absolute/path/to/projects/YYYY-MM-DD_name\",\n  \"contract_version\": \"v1\",\n  \"contract_sha256\": \"\",\n  \"profile\": \"startup-reversible\",\n  \"phase\": \"P5\",\n  \"argv_sha256\": \"\",\n  \"runner_id\": \"runner-name\",\n  \"runner_role\": \"runner\",\n  \"cwd\": \"/absolute/path/the/command/runs/in\",\n  \"output_root\": \"05_engineering/evidence/increments\",\n  \"_note\": \"REMOVE THIS KEY. The manifest never approves itself: the launcher passes --approvals-root (a directory outside the project) or --approved-job-sha256. Binding declarations is not an OS sandbox and not human authentication.\"\n}\n",
+    "templates/expected-output.json": "{\n  \"schema\": \"ldl-expected-output-v1\",\n  \"job_id\": \"JOB-1\",\n  \"output_root\": \"05_engineering/evidence/increments\",\n  \"outputs\": [\n    {\"id\": \"OUT-01\", \"path\": \"result.md\", \"format\": \"markdown\", \"min_bytes\": 1}\n  ]\n}\n",
+    "templates/evaluator-contract.json": "{\n  \"schema\": \"ldl-evaluator-contract-v1\",\n  \"contract_version\": \"v1\",\n  \"scope\": \"evaluation-only\",\n  \"frozen_at\": \"YYYY-MM-DDTHH:MM:SSZ\",\n  \"frozen_sha256\": \"\",\n  \"truth_table\": [\n    {\"case\": \"zero\", \"condition\": \"required item count is 0\", \"verdict\": \"FAIL\"},\n    {\"case\": \"missing\", \"condition\": \"required field absent\", \"verdict\": \"FAIL\"},\n    {\"case\": \"partial\", \"condition\": \"some but not all required items\", \"verdict\": \"PARTIAL_CREDIT\"},\n    {\"case\": \"complete\", \"condition\": \"all required items present\", \"verdict\": \"PASS\"}\n  ],\n  \"aggregate\": {\"method\": \"per-item-mean\", \"judges\": 2, \"tie_break\": \"dispute\"},\n  \"penalty\": {\"applied_at\": \"judge-item-score\", \"double_count\": \"forbidden\", \"max_applications\": 1},\n  \"dispute\": {\"threshold\": 5, \"authority\": \"owner name\", \"authority_kind\": \"actual-human\"}\n}\n",
+    "templates/measurement.json": "{\n  \"schema\": \"ldl-measurement-v1\",\n  \"contract_version\": \"v1\",\n  \"deliverable\": \"one real reversible deliverable\",\n  \"collected_at\": \"YYYY-MM-DDTHH:MM:SSZ\",\n  \"comparison_kind\": \"same-model-process\",\n  \"technical\": {\"invocations\": 0, \"aborted\": 0, \"wall_seconds_total\": null, \"time_to_artifact_seconds\": null, \"source\": \"logs/runner-ledger.csv\", \"llm_calls\": null, \"input_tokens\": null, \"output_tokens\": null, \"checker_runs\": null},\n  \"product_fit\": {\"time_to_human_acceptance_seconds\": null, \"human_minutes\": null, \"rework_rounds\": null, \"quality_defects\": null, \"acceptance\": \"NOT_RUN\", \"source\": null},\n  \"baseline\": {\"status\": \"ABSENT\", \"window\": null, \"unit\": null, \"value\": null, \"source\": null},\n  \"target_improvement_pct\": 30,\n  \"claimed_improvement_pct\": null\n}\n",
+    "templates/status-relay.md": "# Status relay (generated read-only)\n\n> Produced by `python3 tools/execution.py status <project> --format md`.\n> It derives state from PROGRESS.md, the requirement/verification tables and the\n> runner ledger. It writes no gate, verdict or history, and nothing here is a\n> model's opinion about state.\n\n- Goal:\n- State:\n- Delta:\n- Blockers:\n- Path+hash:\n",
+    "templates/roles.md": "# Roles, review and acceptance\n\n| Role | Who | May do | May never do |\n|---|---|---|---|\n| Owner | the actual human | set contract, approve gates, accept delivery | be simulated by any agent |\n| Owner proxy | a delegated agent | record decisions inside a written delegation | claim to be the human owner |\n| Maker | the implementing agent | write product sources and tests | approve its own work, write gate rows |\n| Verifier | a read-only reviewer | rerun commands, read diffs, report | edit product sources |\n\n## Review depth is risk-adaptive\n\n| Risk | Review |\n|---|---|\n| low-reversible | maker tests plus one same-model fresh-context read |\n| high-risk or irreversible | the above plus a different-model or domain-expert verifier, before the gate |\n\n## Same-model fresh context is not a second opinion from a person\n\nA fresh-context run of the same model shares its training and its blind spots.\nIt catches stated-versus-done drift; it does not establish that the work is\nwanted. Only the actual recipient does that, and until they say so, user\nacceptance stays NOT_RUN.\n",
     "owner/inbox.md": "# Owner inbox\n\n> Maker writes requests here. Owner does not edit project trees.\n",
     "owner/outbox.md": "# Owner outbox\n\n> Owner writes decisions here. Maker preserves accepted decisions once under project raw/.\n",
 }
@@ -237,7 +243,7 @@ def write(path, content):
             handle.write(content)
 
 
-def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate_v042=False, migrate_v050=False, migrate_v060=False, migrate_v061=False):
+def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate_v042=False, migrate_v050=False, migrate_v060=False, migrate_v061=False, migrate_v070=False):
     existed = os.path.isdir(root) and bool(os.listdir(root))
     marker = os.path.join(root, ".ldl-version")
     if existed and not os.path.isfile(marker) and not migrate_v03:
@@ -245,8 +251,10 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
     if os.path.isfile(marker):
         with open(marker, encoding="utf-8") as handle:
             current = handle.read().strip()
-        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
             sys.exit(f"unsupported workspace schema: {current or 'empty'}")
+        if migrate_v070 and current != "0.6.1":
+            sys.exit("v0.7.0 migration requires a v0.6.1 workspace; migrate sequentially first")
         if migrate_v061 and current != "0.6.0":
             sys.exit("v0.6.1 migration requires a v0.6.0 workspace; migrate sequentially first")
         if migrate_v060 and current != "0.5.0":
@@ -271,7 +279,10 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
         if current == "0.6.0" and not migrate_v061:
             print(root)
             return
-        if current == "0.6.1":
+        if current == "0.6.1" and not migrate_v070:
+            print(root)
+            return
+        if current == "0.7.0":
             print(root)
             return
         if current == "0.4.0" and migrate_v042:
@@ -318,13 +329,13 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
         os.makedirs(os.path.join(root, directory), exist_ok=True)
     for rel, content in WS_FILES.items():
         write(os.path.join(root, rel), content)
-    if (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or migrate_v061) and os.path.isfile(marker):
+    if (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or migrate_v061 or migrate_v070) and os.path.isfile(marker):
         with open(marker, encoding="utf-8") as handle:
             current = handle.read().strip()
-        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+        if current not in {"0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
             sys.exit(f"cannot migrate unsupported schema: {current or 'empty'}")
         with open(marker, "w", encoding="utf-8") as handle:
-            handle.write((LATEST_VERSION if migrate_v061 else "0.6.0" if migrate_v060 else "0.5.0" if migrate_v050 else "0.4.2" if migrate_v042 else "0.4.1" if migrate_v041 else "0.4.0") + "\n")
+            handle.write((LATEST_VERSION if migrate_v070 else "0.6.1" if migrate_v061 else "0.6.0" if migrate_v060 else "0.5.0" if migrate_v050 else "0.4.2" if migrate_v042 else "0.4.1" if migrate_v041 else "0.4.0") + "\n")
         index = os.path.join(root, "index.md")
         if os.path.isfile(index):
             with open(index, encoding="utf-8") as handle:
@@ -342,6 +353,12 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
                 "- [Capability proof](templates/capability-proof.json)",
                 "- [Judge score](templates/judge-score.json)",
                 "- [Submission manifest](templates/submission-manifest.json)",
+                "- [Approved job](templates/approved-job.json)",
+                "- [Expected output manifest](templates/expected-output.json)",
+                "- [Frozen evaluator contract](templates/evaluator-contract.json)",
+                "- [Measurement record](templates/measurement.json)",
+                "- [Status relay](templates/status-relay.md)",
+                "- [Roles and review depth](templates/roles.md)",
                 "- [Owner inbox](owner/inbox.md)",
                 "- [Owner outbox](owner/outbox.md)",
             ]
@@ -352,10 +369,11 @@ def init(root, migrate_v03=False, migrate_v04=False, migrate_v041=False, migrate
                 with open(index, "w", encoding="utf-8") as handle:
                     handle.write(text)
     source_dir = os.path.dirname(os.path.abspath(__file__))
-    for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py", "invoke.py"):
+    for name in ("scaffold.py", "lint.py", "integrity.py", "lean.py", "workflow.py", "invoke.py",
+                 "policy.py", "execution.py"):
         source = os.path.join(source_dir, name)
         target = os.path.join(root, "tools", name)
-        if os.path.isfile(source) and (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or migrate_v061 or not os.path.exists(target)):
+        if os.path.isfile(source) and (migrate_v04 or migrate_v041 or migrate_v042 or migrate_v050 or migrate_v060 or migrate_v061 or migrate_v070 or not os.path.exists(target)):
             shutil.copy2(source, target)
     print(root)
 
@@ -366,12 +384,12 @@ NAME_OK = re.compile(r"^[A-Za-z0-9가-힣][A-Za-z0-9가-힣._-]*$")
 def project_files(profile, schema_version=LATEST_VERSION):
     if profile not in PROFILES:
         raise SystemExit(f"unsupported delivery profile: {profile}")
-    if profile == "pre-engineering-decision" and schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+    if profile == "pre-engineering-decision" and schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         raise SystemExit(f"{profile} profile requires a v0.4.1+ workspace")
-    if profile == "portfolio-competition" and schema_version not in {"0.5.0", "0.6.0", "0.6.1"}:
+    if profile == "portfolio-competition" and schema_version not in {"0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         raise SystemExit("portfolio-competition profile requires a v0.5.0+ workspace")
     files = dict(PROJ_FILES)
-    if schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+    if schema_version not in {"0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         files["03_EVIDENCE.md"] = LEGACY_EVIDENCE
     if profile == "pre-engineering-decision":
         files["00_CONTRACT.md"] = PRE_ENGINEERING_CONTRACT
@@ -408,7 +426,7 @@ def new_project(root, name, date=None, profile="startup-reversible"):
     if os.path.isfile(marker_path):
         with open(marker_path, encoding="utf-8") as handle:
             schema_version = handle.read().strip()
-    if schema_version not in {"legacy", "0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1"}:
+    if schema_version not in {"legacy", "0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.5.0", "0.6.0", "0.6.1", "0.7.0"}:
         sys.exit(f"unsupported workspace schema: {schema_version or 'empty'}")
     for directory in ["05_engineering/evidence/deterministic", "05_engineering/evidence/rendered", "05_engineering/evidence/independent", "05_engineering/evidence/release", "05_engineering/evidence/experiments", "05_engineering/evidence/increments", "raw", "logs/sessions"]:
         os.makedirs(os.path.join(proj, directory), exist_ok=True)
@@ -442,6 +460,7 @@ def main():
     p_init.add_argument("--migrate-v050", action="store_true")
     p_init.add_argument("--migrate-v060", action="store_true")
     p_init.add_argument("--migrate-v061", action="store_true")
+    p_init.add_argument("--migrate-v070", action="store_true")
     p_new = sub.add_parser("new")
     p_new.add_argument("name")
     p_new.add_argument("--date")
@@ -449,7 +468,7 @@ def main():
     p_new.add_argument("--profile", choices=sorted(PROFILES), default="startup-reversible")
     args = parser.parse_args()
     if args.cmd == "init":
-        init(args.path, args.migrate_v03, args.migrate_v04, args.migrate_v041, args.migrate_v042, args.migrate_v050, args.migrate_v060, args.migrate_v061)
+        init(args.path, args.migrate_v03, args.migrate_v04, args.migrate_v041, args.migrate_v042, args.migrate_v050, args.migrate_v060, args.migrate_v061, args.migrate_v070)
     else:
         new_project(args.root, args.name, args.date, args.profile)
 

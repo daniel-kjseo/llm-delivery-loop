@@ -4,6 +4,8 @@
 
 **LDL** (LLM Delivery Loop) is a pattern for delivering real results with AI agents. In one sentence — **humans govern through contracts and gates, agents execute through loops, and every project compounds into a second brain.** Three elements: (1) contract & gates (governance) (2) loop execution (delivery) (3) compounding assets. If the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) compounds knowledge, LDL compounds delivery.
 
+> **Versions.** The published stable release is **v0.6.1** (`c99d35a`) — that is what "LDL does X" refers to anywhere in this document unless a line says otherwise. This working tree also carries an unpublished **v0.7.0 candidate**: the profile-aware launch policy, the opt-in approved-job interface, atomic invocation reservation, expected-output reconciliation, and the read-only status report. Candidate features are marked *(v0.7.0 candidate)* and are not a release claim. One authority for both: [AUTHORITY.md](AUTHORITY.md). Prevention rules: [REVIEW_LOG.md](REVIEW_LOG.md).
+
 > **Quick start** — paste this document into your agent and ask: *"Install this into my workspace."*
 > Works with Claude Code, Codex, Cursor, Gemini CLI, or any agent that can read and write files. Nothing to install, no dependencies — in LDL the methodology **is** the folder structure.
 
@@ -184,6 +186,38 @@ Migration from v0.6.0 is explicit but — unlike every earlier migration — doe
 ```bash
 python3 tools/scaffold.py init WORKSPACE --migrate-v061
 ```
+
+## v0.7.0 candidate — Approved execution, reconciliation, status *(not released)*
+
+Unpublished candidate on top of stable v0.6.1 (`c99d35a`). Nothing below is a release claim, and none of it is an OS sandbox or human authentication: the checks bind *declarations* to records written outside the maker's tree.
+
+```bash
+# workspace (opt-in migration; without the flag a v0.6.1 workspace stays v0.6.1)
+python3 tools/scaffold.py init WORKSPACE --migrate-v070
+
+# what may launch, per delivery profile
+python3 tools/policy.py show startup-reversible
+python3 tools/policy.py check PROJECT --phase P4
+
+# launch a runner: legacy (gate policy only, labelled limited)
+python3 tools/invoke.py run PROJECT --phase P4 --runner-id steve --session S-1 -- python3 build.py
+
+# launch under an approved job the maker did not write, with declared outputs
+python3 tools/execution.py job-validate PROJECT job.json --phase P4 --runner-id steve \
+    --runner-role runner --cwd "$PWD" --approvals-root /outside/owner-approvals -- python3 build.py
+python3 tools/invoke.py run PROJECT --phase P4 --runner-id steve --session S-1 \
+    --job job.json --approvals-root /outside/owner-approvals --expect expected-outputs.json \
+    -- python3 build.py
+
+# artifacts, status relay, frozen evaluator template, measurement
+python3 tools/execution.py reconcile PROJECT expected-outputs.json --not-before "$START_EPOCH"
+python3 tools/execution.py status PROJECT --format md
+python3 tools/execution.py evaluator-validate evaluator.json --expected-sha256 <pinned digest>
+python3 tools/execution.py measure-collect PROJECT --deliverable "one real deliverable" --output m.json
+python3 tools/execution.py measure-validate m.json
+```
+
+The runner command always follows a literal `--`. `--expect` is frozen before launch and the declared output paths are reserved against other live invocations, so a child cannot rewrite its own success criteria or silently share another run's output. `status` is derived read-only: it writes no gate, verdict or history, and missing or unverifiable evidence reports `UNKNOWN`/`NOT_RUN`/`HOLD` — never `PASS`. `evaluator-validate` without `--expected-sha256` reports `UNBOUND`, because a self-recomputed hash proves only that the file hashed itself. Improvement targets stay targets: a gain claim is refused unless a measured baseline and its unit, window and source exist, and human acceptance recorded as a string is reported `CLAIMED_UNVERIFIED`.
 
 ## Phase 0 — Goal setting (the contract)
 
@@ -386,7 +420,7 @@ Then the global constitution (first-time users): if there is no user-level globa
    ├── templates/                 # task prompt & document templates
    ├── logs/                      # outer-loop log — collection purposes, ingest verdicts, lint (log.md)
    ├── owner/                     # owner inbox/outbox — owner never writes project evidence directly
-   ├── tools/                     # scaffold.py + lint.py + integrity.py + lean.py + workflow.py + invoke.py
+   ├── tools/                     # scaffold.py + lint.py + integrity.py + lean.py + workflow.py + policy.py + invoke.py + execution.py
    └── projects/                  ← inner loop = one folder per project
        ├── CLAUDE.md              # shared project protocol — Phase 0–6 gates, naming, document & log standards
        └── YYYY-MM-DD_<name>/     ← start date, never renamed
@@ -402,7 +436,7 @@ Then the global constitution (first-time users): if there is no user-level globa
            └── logs/              # log.md + cost-ledger.csv + prompts.jsonl + intervention ledger + sessions/
    ```
 
-   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), [`tools/workflow.py`](tools/workflow.py), and [`tools/invoke.py`](tools/invoke.py). `scaffold.py init` creates a new v0.6.1 workspace; it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. Migration is sequential and explicit: v0.3 → v0.4.0 with `--migrate-v04`, empty v0.4.0 → v0.4.1 with `--migrate-v041`, empty v0.4.1 → v0.4.2 with `--migrate-v042`, empty v0.4.2 → v0.5.0 with `--migrate-v050`, empty v0.5.0 → v0.6.0 with `--migrate-v060`, and v0.6.0 → v0.6.1 with `--migrate-v061` (projects may stay in place; no project schema changes). Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint, `--profile gated-high-risk` for the full risk path, or `--profile portfolio-competition` for the v0.5 evaluator-first portfolio path. A rewrite must keep the same verdicts: `lint.py --selftest` plus `tests/test_v030.py`, `tests/test_v040.py`, `tests/test_v041.py`, `tests/test_v042.py`, `tests/test_v050.py`, `tests/test_v060.py`, and `tests/test_v061.py` cover legacy, evidence/safety, Ship-First, safe pre-engineering, independent promotion, evaluator-first portfolio, enforced-evaluation, and gated-invocation boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
+   Generate this with a script, not by hand. The reference toolset is [`tools/scaffold.py`](tools/scaffold.py), [`tools/lint.py`](tools/lint.py), [`tools/integrity.py`](tools/integrity.py), [`tools/lean.py`](tools/lean.py), [`tools/workflow.py`](tools/workflow.py), [`tools/invoke.py`](tools/invoke.py), and — in the v0.7.0 candidate — [`tools/policy.py`](tools/policy.py) and [`tools/execution.py`](tools/execution.py): eight tools in total. `scaffold.py init` on this working tree creates a v0.7.0 candidate workspace (the published stable installer creates v0.6.1); it refuses a nonempty marker-free workspace unless `--migrate-v03` is explicit. Migration is sequential and explicit: v0.3 → v0.4.0 with `--migrate-v04`, empty v0.4.0 → v0.4.1 with `--migrate-v041`, empty v0.4.1 → v0.4.2 with `--migrate-v042`, empty v0.4.2 → v0.5.0 with `--migrate-v050`, empty v0.5.0 → v0.6.0 with `--migrate-v060`, v0.6.0 → v0.6.1 with `--migrate-v061` (projects may stay in place; no project schema changes), and v0.6.1 → v0.7.0 with `--migrate-v070`. Every migration is **opt-in**: without the explicit flag an existing v0.6.1 workspace stays v0.6.1 and no file is rewritten. Active projects are never silently rewritten. `scaffold.py new` registers the project in `index.md`; add `--profile pre-engineering-decision` for a G3 decision endpoint, `--profile gated-high-risk` for the full risk path, or `--profile portfolio-competition` for the v0.5 evaluator-first portfolio path. A rewrite must keep the same verdicts: `lint.py --selftest` plus `tests/test_v030.py`, `tests/test_v040.py`, `tests/test_v041.py`, `tests/test_v042.py`, `tests/test_v050.py`, `tests/test_v060.py`, `tests/test_v061.py`, `tests/test_v070.py`, and `tests/test_v070_correction.py` cover legacy, evidence/safety, Ship-First, safe pre-engineering, independent promotion, evaluator-first portfolio, enforced-evaluation, and gated-invocation boundaries. Two installers that disagree on what passes are two different methodologies wearing one version number.
 
    The scaffolder pre-creates every numbered document as a headed skeleton — an empty `03_EVIDENCE.md` in a fresh project is a to-do, not litter, and link-closure still applies to it: every phase document is reachable from the project's `PROGRESS.md`.
 
@@ -411,7 +445,7 @@ Then the global constitution (first-time users): if there is no user-level globa
    Additionally: set the three permission tiers (unattended = read-only, always; reversible = backup first; irreversible = explicit re-confirmation) and a measurement baseline (measure the current value once, now).
 
 **Step 3 — Engrave the constitutions.** In the **workspace constitution** (skeleton of six parts — identity in one sentence / principles / how we work / permissions and limits / scope constraints / center), write the outer-loop protocol (Ingest·Query·Lint, wiki standards). In the **shared project protocol** (`projects/CLAUDE.md`), write the Phase 0–6 gate, document, and log standards, plus the instruction: **"Read the active project's contract (`00_CONTRACT.md`) before starting any work. Work outside the contract only after contract-change approval."** Transfer only the rules needed, rewritten in the user's own language — never copy this document wholesale. Purpose: a future session's agent behaves by the methodology without ever seeing this file. The reference lint fails while either installation sentinel remains; deleting the sentence without replacing the protocol is not engraving.
-**Step 4 — Verify the installation.** Confirm all six tools execute. Run `python3 tools/lint.py --selftest`; validate one phase packet; create the first project and complete Phase 0; run `python3 tools/lint.py --through P0 .`; then prove `workflow.py scratch-init` and `promote --through P0` on a disposable copy. Demonstrate rejection of target drift, existing-raw mutation, an oversized contract, a stale artifact hash, a stale typed Gate evidence hash, and a missing requirement verdict. Report executed verdicts, not intentions.
+**Step 4 — Verify the installation.** Confirm all eight tools execute (six in stable v0.6.1; `policy.py` and `execution.py` are v0.7.0 candidate). Run `python3 tools/lint.py --selftest`; validate one phase packet; create the first project and complete Phase 0; run `python3 tools/lint.py --through P0 .`; then prove `workflow.py scratch-init` and `promote --through P0` on a disposable copy. Demonstrate rejection of target drift, existing-raw mutation, an oversized contract, a stale artifact hash, a stale typed Gate evidence hash, and a missing requirement verdict. Report executed verdicts, not intentions.
 
 ## Principles
 

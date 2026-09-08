@@ -104,6 +104,15 @@ class InvokeTests(unittest.TestCase):
         self.refused("G1")
 
     def test_p4_requires_g2_even_after_g1(self):
+        """Kept from v0.6.1, retargeted at the profile it was always describing.
+
+        v0.6.1 applied `P4 needs G2` to every project. From v0.7.0 that rule
+        belongs to gated-high-risk (and portfolio-competition), where losing it
+        would be the actual safety regression; startup-reversible reaches P4
+        under G1 plus its launch documents. The assertion itself is unchanged.
+        """
+        proj = scaffold.new_project(self.ws, "high-risk", "2026-01-02", "gated-high-risk")
+        self.proj, self.ledger = proj, os.path.join(proj, "logs", "runner-ledger.csv")
         self.typed_pass("G1")
         self.refused("G2", phase="P4")
 
@@ -114,6 +123,9 @@ class InvokeTests(unittest.TestCase):
 
     # -- 2. PASS must carry typed evidence --------------------------------
     def test_textual_pass_without_typed_evidence_is_refused(self):
+        # v0.7.0 also revalidates the phases a gate owns, and that check speaks
+        # first; complete P0 so the refusal is the typed-evidence one under test.
+        self.replace("PROGRESS.md", "| P0 contract | pending | |", "| P0 contract | done | 2026-01-01 |")
         self.replace(
             "PROGRESS.md",
             "| G1 | PENDING | v1 | human | | | |",

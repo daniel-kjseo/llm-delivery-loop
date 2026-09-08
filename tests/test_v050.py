@@ -158,7 +158,8 @@ class V050Tests(unittest.TestCase):
             self.write_json(rel, obj)
 
     def test_latest_scaffold_has_portfolio_profile_and_project_prompt_log(self):
-        self.assertEqual("0.6.1", open(os.path.join(self.ws, ".ldl-version"), encoding="utf-8").read().strip())
+        # a fresh install is whatever the scaffold currently creates, not a pinned string
+        self.assertEqual(scaffold.LATEST_VERSION, open(os.path.join(self.ws, ".ldl-version"), encoding="utf-8").read().strip())
         for rel in ("02_EVALUATION.json", "03_PORTFOLIO.json", "04_PREFLIGHT.json",
                     "06_CAPABILITIES.json", "06_JUDGE_SCORES.json", "06_SUBMISSION.json",
                     "logs/prompts.jsonl", "logs/intervention-ledger.csv"):

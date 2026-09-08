@@ -114,7 +114,8 @@ def inside_raw(rel):
 def is_append_log(rel):
     parts = rel.split(os.sep)
     return "logs" in parts and parts[-1] in {
-        "log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv", "runner-ledger.csv"}
+        "log.md", "cost-ledger.csv", "prompts.jsonl", "intervention-ledger.csv", "runner-ledger.csv",
+        "approved-jobs.jsonl"}
 
 
 def is_root_tool(rel):
@@ -327,19 +328,108 @@ def prompt_log(project, session, source, actor="human", timestamp=None):
     print(f"PROMPT LOG PASS - session={session} actor={actor} bytes={len(prompt.encode('utf-8'))}")
 
 
+FENCE_OPENER = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+SEPARATOR_CELL = re.compile(r":?-+:?")
+
+
+def _blank(out, start, end):
+    for index in range(start, end):
+        if out[index] != "\n":
+            out[index] = " "
+
+
+def mask_inactive_regions(text):
+    """Blank out everything that is not live Markdown, keeping byte offsets.
+
+    Inactive means: inside a code fence, or inside an HTML comment. A table in
+    either place is an illustration or a disabled draft, never the control
+    plane that decides a launch (review 1 class 2; review 2 F1).
+
+    The rules are the ones a Markdown reader actually applies, because the
+    earlier "toggle on any fence marker" version could be defeated four ways:
+    a fence is closed only by the same delimiter character at least as long as
+    the opener, an unclosed fence or comment swallows the rest of the document
+    (so its content stays inactive rather than becoming active), and a comment
+    opener inside a fence is fence content, not a comment.
+
+    Offsets are preserved because callers slice the *original* text by span.
+    """
+    out = list(text)
+    fence = None            # (delimiter char, opener length)
+    in_comment = False
+    position = 0
+    for line in text.splitlines(keepends=True):
+        start = position
+        position += len(line)
+        content = line[:-1] if line.endswith("\n") else line
+        cursor = 0
+        while cursor <= len(content):
+            if in_comment:
+                closing = content.find("-->", cursor)
+                if closing < 0:
+                    _blank(out, start + cursor, start + len(content))
+                    break
+                _blank(out, start + cursor, start + closing + 3)
+                cursor, in_comment = closing + 3, False
+                continue
+            if fence is not None:
+                _blank(out, start, start + len(content))
+                stripped = content.strip()
+                char, length = fence
+                if stripped and set(stripped) == {char} and len(stripped) >= length:
+                    fence = None
+                break
+            comment = content.find("<!--", cursor)
+            opener = FENCE_OPENER.match(content) if cursor == 0 else None
+            if opener and (comment < 0 or opener.start("fence") < comment):
+                marker = opener.group("fence")
+                fence = (marker[0], len(marker))
+                _blank(out, start, start + len(content))
+                break
+            if comment < 0:
+                break
+            _blank(out, start + comment, start + comment + 4)
+            cursor, in_comment = comment + 4, True
+    return "".join(out)
+
+
+# Kept as the documented name of the older, weaker masker so no caller can
+# quietly go on using fence-only masking.
+mask_fenced_blocks = mask_inactive_regions
+
+
+def _split_row(line):
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
 def markdown_table(text, title, columns):
-    match = re.search(rf"^##\s+{re.escape(title)}\s*$([\s\S]*?)(?=^##\s+|\Z)", text, re.M | re.I)
-    if not match:
+    """Return the one active section named `title` and its validated rows.
+
+    Two active sections with the same title are two answers to the same
+    question, so the ambiguity is refused rather than resolved by "first
+    match". The second line of the table must actually be a separator: a
+    verdict row standing in its place used to be skipped silently and the
+    shadowed row below it read as the truth (review 2, F1).
+    """
+    masked = mask_inactive_regions(text)
+    pattern = re.compile(rf"^##\s+{re.escape(title)}\s*$([\s\S]*?)(?=^##\s+|\Z)", re.M | re.I)
+    matches = list(pattern.finditer(masked))
+    if not matches:
         raise SystemExit(f"required section missing: {title}")
+    if len(matches) > 1:
+        raise SystemExit(f"duplicate active section: {title}; the control plane must be one table")
+    match = matches[0]
     lines = [line.strip() for line in match.group(1).splitlines() if line.strip().startswith("|")]
     if len(lines) < 2:
         raise SystemExit(f"table missing: {title}")
-    split = lambda line: [cell.strip() for cell in line.strip("|").split("|")]
-    if split(lines[0]) != columns:
+    if _split_row(lines[0]) != columns:
         raise SystemExit(f"wrong columns in {title}")
+    separator = _split_row(lines[1])
+    if len(separator) != len(columns) or not all(SEPARATOR_CELL.fullmatch(cell) for cell in separator):
+        raise SystemExit(f"missing separator row in {title}; row 2 is not a header separator")
     rows = []
     for line in lines[2:]:
-        cells = split(line)
+        cells = _split_row(line)
         if len(cells) != len(columns):
             raise SystemExit(f"malformed row in {title}")
         rows.append(dict(zip(columns, cells)))
