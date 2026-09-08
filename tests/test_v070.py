@@ -1008,33 +1008,36 @@ class MigrationTests(unittest.TestCase):
 
 
 class VersionTruthTests(unittest.TestCase):
-    """One authority for what is public and what is only a candidate."""
+    """One authority for which version is public, and one answer everywhere."""
 
     def read(self, *parts):
         with open(os.path.join(ROOT, *parts), encoding="utf-8") as handle:
             return handle.read()
 
-    def test_authority_document_exists_and_names_both_versions(self):
+    def test_authority_document_names_v070_stable_and_keeps_v061_history(self):
         text = self.read("AUTHORITY.md")
-        self.assertIn("0.6.1", text)
         self.assertIn("0.7.0", text)
-        self.assertIn("candidate", text.lower())
+        self.assertIn("0.6.1", text)
+        head = text[:4000].lower()
+        self.assertIn("stable", head)
+        self.assertIn("v0.7.0", head)
 
     def test_review_log_records_prevention_rules(self):
         text = self.read("REVIEW_LOG.md")
         for rule in ("R-COMPOSE", "R-TRUST", "R-OUTCOME", "R-MODEL"):
             self.assertIn(rule, text)
 
-    def test_readme_marks_v070_as_candidate_and_keeps_v061_public(self):
+    def test_readme_marks_v070_stable_and_keeps_v061_history(self):
         text = self.read("README.md")
         self.assertIn("v0.6.1", text)
         self.assertIn("v0.7.0", text)
-        head = text[:4000]
-        self.assertIn("candidate", head.lower())
+        head = text[:4000].lower()
+        self.assertIn("stable release is **v0.7.0**", head)
 
     def test_scaffold_and_documents_agree_on_the_latest_version(self):
         self.assertEqual("0.7.0", scaffold.LATEST_VERSION)
-        self.assertIn("0.7.0", self.read("AUTHORITY.md"))
+        for document in ("AUTHORITY.md", "README.md"):
+            self.assertIn(scaffold.LATEST_VERSION, self.read(document))
 
 
 if __name__ == "__main__":

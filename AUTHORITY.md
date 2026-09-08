@@ -4,19 +4,19 @@
 
 | Question | Answer | Where it is decided |
 |---|---|---|
-| What is the public stable release? | **v0.6.1**, commit `c99d35a670651c8084d2d5b85a2c44f6aac4bd54` | the published tag in the GitHub repository |
-| What is in this working tree? | **v0.7.0 candidate**, unpublished | `tools/scaffold.py` `LATEST_VERSION` and `.ldl-version` in a new workspace |
-| Which one may be cited as shipped? | v0.6.1 only, until the owner publishes v0.7.0 | this document |
+| What is the public stable release? | **v0.7.0** | the published tag `v0.7.0` in the GitHub repository |
+| Which commit is that? | the commit the published tag points to | read it from the tag and its GitHub Release, never from a copy pasted into a document |
+| What is in this working tree? | **v0.7.0**, the same version as the published tag | `tools/scaffold.py` `LATEST_VERSION` and `.ldl-version` in a new workspace |
+| Which one may be cited as shipped? | v0.7.0 | this document |
 
-`LATEST_VERSION` is the scaffold's answer to "what do I create today". It is
-not a claim that the version is released. Until the owner publishes, every
-document that mentions v0.7.0 says *candidate*, and every claim about what LDL
-does in production refers to v0.6.1.
+`LATEST_VERSION` is the scaffold's answer to "what do I create today". For
+v0.7.0 it now agrees with the published tag, so a claim about what LDL does in
+production refers to v0.7.0.
 
-This dual state is temporary by design. When v0.7.0 is published, this table
-gets one edit — stable becomes v0.7.0 — and the candidate row is removed. It
-must never become a permanent two-truths arrangement where a reader cannot tell
-which version they have.
+There is one version again, which is the point: the tag is the authority, and a
+reader who wants the exact commit resolves the tag rather than trusting a
+transcribed hash. v0.6.1 and every earlier release stay in the history below and
+in the version sections of the README as the record of what shipped when.
 
 ## Roles
 
@@ -63,7 +63,7 @@ actual recipient's acceptance.
   generates PROGRESS.md or a gate decision, and anything missing or unparsable
   reports UNKNOWN, which can never roll up to PASS.
 
-## Trust and measurement boundary (v0.7.0 candidate)
+## Trust and measurement boundary (v0.7.0)
 
 An approved job binds a declaration — project, contract hash, profile, phase, argv hash, runner id and role, cwd, output root — to an approval record stored outside the project. That is the whole claim. It is **not an OS sandbox**: no launched process is confined, and a command that lies about what it writes still writes it. It is **not human authentication**: an approval file proves a file exists outside the maker's tree, not that a person created it, and the owner/launcher alone is responsible for the provenance of the digests it pins. Legacy invocation without `--job` is labelled *limited* and must never be described as secured.
 
