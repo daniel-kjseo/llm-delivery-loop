@@ -564,7 +564,11 @@ def check(lint, proj, through="final"):
                     for match in re.finditer(r"\b(?:G([1-4])|Gate\s+([1-4]))\b", approval_text, re.I):
                         mentioned.add("G" + (match.group(1) or match.group(2)))
                     if mentioned != {name}:
-                        lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify this gate")
+                        hint = ""
+                        if name in mentioned:
+                            hint = (f" (also mentions {', '.join(sorted(mentioned - {name}))} - "
+                                    "keep the verbatim utterance in the interview record and cite it here)")
+                        lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify this gate{hint}")
                     if not re.search(rf"\b{re.escape(version)}\b", approval_text, re.I):
                         lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify contract {version}")
                 real_target = os.path.realpath(target)
