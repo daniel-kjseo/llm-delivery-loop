@@ -236,7 +236,7 @@ class V030LintTests(unittest.TestCase):
         with open(os.path.join(self.proj, "raw", "approval-g1.md"), "w", encoding="utf-8") as handle:
             handle.write("Daniel approves G1, G2 and G3 together for contract v1.")
         self.assert_error("G1 approval evidence does not identify this gate (also mentions G2, G3 - "
-                          "keep the verbatim utterance in the interview record and cite it here)")
+                          "keep the verbatim utterance in its own raw file and cite it here)")
 
     def test_gate_order_is_monotonic(self):
         self.replace("PROGRESS.md", "| G3 | PENDING | v1 | human | | | |", "| G3 | PASS | v1 | human | Daniel | 2026-01-03T10:00:00Z | [approval](raw/approval-g1.md) |")

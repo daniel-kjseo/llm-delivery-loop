@@ -567,7 +567,7 @@ def check(lint, proj, through="final"):
                         hint = ""
                         if name in mentioned:
                             hint = (f" (also mentions {', '.join(sorted(mentioned - {name}))} - "
-                                    "keep the verbatim utterance in the interview record and cite it here)")
+                                    "keep the verbatim utterance in its own raw file and cite it here)")
                         lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify this gate{hint}")
                     if not re.search(rf"\b{re.escape(version)}\b", approval_text, re.I):
                         lint.err("L8", f"{lint.rel(progress_path)}: {name} approval evidence does not identify contract {version}")
